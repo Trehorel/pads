@@ -4,25 +4,25 @@
   /* ---------- Définition des pads ---------- */
 
   const PADS = [
-    { name: 'Kick',        key: 'a', type: 'hit',  sound: 'kick',    color: '#ff5c5c' },
-    { name: 'Snare',       key: 'z', type: 'hit',  sound: 'snare',   color: '#ff5c5c' },
-    { name: 'Clap',        key: 'e', type: 'hit',  sound: 'clap',    color: '#ff5c5c' },
-    { name: 'Hat',         key: 'r', type: 'hit',  sound: 'hat',     color: '#ff5c5c' },
+    { name: 'Kick',         key: 'a', type: 'hit',  sound: 'kick',    color: '#ff5c5c' },
+    { name: 'Snare',        key: 'z', type: 'hit',  sound: 'snare',   color: '#ff5c5c' },
+    { name: 'Clap',         key: 'e', type: 'hit',  sound: 'clap',    color: '#ff5c5c' },
+    { name: 'Hat',          key: 'r', type: 'hit',  sound: 'hat',     color: '#ff5c5c' },
 
-    { name: 'Open hat',    key: 'q', type: 'hit',  sound: 'openhat', color: '#ffb23c' },
-    { name: 'Tom',         key: 's', type: 'hit',  sound: 'tom',     color: '#ffb23c' },
-    { name: 'Rim',         key: 'd', type: 'hit',  sound: 'rim',     color: '#ffb23c' },
-    { name: 'Cowbell',     key: 'f', type: 'hit',  sound: 'cowbell', color: '#ffb23c' },
+    { name: 'Open hat',     key: 'q', type: 'hit',  sound: 'openhat', color: '#ffb23c' },
+    { name: 'Tom',          key: 's', type: 'hit',  sound: 'tom',     color: '#ffb23c' },
+    { name: 'Rim',          key: 'd', type: 'hit',  sound: 'rim',     color: '#ffb23c' },
+    { name: 'Cowbell',      key: 'f', type: 'hit',  sound: 'cowbell', color: '#ffb23c' },
 
-    { name: 'Basse',       key: 'w', type: 'hit',  sound: 'bass',    color: '#3cd6ff' },
-    { name: 'Accord',      key: 'x', type: 'hit',  sound: 'stab',    color: '#3cd6ff' },
-    { name: 'Pluck',       key: 'c', type: 'hit',  sound: 'pluck',   color: '#3cd6ff' },
-    { name: 'Laser',       key: 'v', type: 'hit',  sound: 'laser',   color: '#3cd6ff' },
+    { name: 'Basse',        key: 'w', type: 'hit',  sound: 'bass',    color: '#3cd6ff' },
+    { name: 'Accord',       key: 'x', type: 'hit',  sound: 'stab',    color: '#3cd6ff' },
+    { name: 'Pluck',        key: 'c', type: 'hit',  sound: 'pluck',   color: '#3cd6ff' },
+    { name: 'Laser',        key: 'v', type: 'hit',  sound: 'laser',   color: '#3cd6ff' },
 
-    { name: 'Boucle beat', key: 't', type: 'loop', loop: 'beat',     color: '#b57cff' },
-    { name: 'Boucle hats', key: 'y', type: 'loop', loop: 'hats',     color: '#b57cff' },
-    { name: 'Boucle basse', key: 'u', type: 'loop', loop: 'bass',    color: '#b57cff' },
-    { name: 'Boucle arp',  key: 'i', type: 'loop', loop: 'arp',      color: '#b57cff' }
+    { name: 'Boucle beat',  key: 't', type: 'loop', loop: 'beat',     color: '#b57cff' },
+    { name: 'Boucle hats',  key: 'y', type: 'loop', loop: 'hats',     color: '#b57cff' },
+    { name: 'Boucle basse', key: 'u', type: 'loop', loop: 'bass',     color: '#b57cff' },
+    { name: 'Boucle arp',   key: 'i', type: 'loop', loop: 'arp',      color: '#b57cff' }
   ];
 
   /* ---------- État audio ---------- */
@@ -33,6 +33,7 @@
   let delay = null;
   let delayGain = null;
   let analyser = null;
+  let recDest = null;
   let noiseBuf = null;
   let freqData = null;
 
@@ -44,6 +45,39 @@
     loops: new Set(),
     queue: []
   };
+
+  /* ---------- État de l'enregistreur ---------- */
+
+  const MAX_REC = 300; // durée maximale d'un enregistrement, en secondes
+
+  const rec = {
+    on: false,
+    start: 0,
+    duration: 0,
+    bpm: 110,
+    events: []
+  };
+
+  const play = {
+    on: false,
+    start: 0,
+    idx: 0,
+    timer: null,
+    timeouts: []
+  };
+
+  // Format audio pris en charge par le navigateur pour le téléchargement
+  const MIME = (typeof MediaRecorder !== 'undefined')
+    ? ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus']
+        .find((type) => MediaRecorder.isTypeSupported(type))
+    : undefined;
+
+  const EXT = MIME
+    ? (MIME.includes('mp4') ? 'm4a' : MIME.includes('ogg') ? 'ogg' : 'webm')
+    : '';
+
+  let mediaRec = null;
+  let audioUrl = null;
 
   /* ---------- Éléments de la page ---------- */
 
@@ -57,8 +91,19 @@
   const tempo = document.getElementById('tempo');
   const stopBtn = document.getElementById('stop');
 
+  const recBtn = document.getElementById('recBtn');
+  const playBtn = document.getElementById('playBtn');
+  const dlBtn = document.getElementById('dlBtn');
+  const loopPlay = document.getElementById('loopPlay');
+  const timelineEl = document.getElementById('timeline');
+  const fillEl = document.getElementById('fill');
+  const timeEl = document.getElementById('time');
+  const statusEl = document.getElementById('recStatus');
+
   const padEls = [];
   const stepEls = [];
+
+  if (!MIME) dlBtn.hidden = true;
 
   /* ---------- Initialisation de l'audio ---------- */
 
@@ -97,6 +142,12 @@
     master.connect(comp);
     comp.connect(analyser);
     analyser.connect(ctx.destination);
+
+    // Sortie dédiée à l'enregistrement audio (fichier téléchargeable)
+    if (MIME && ctx.createMediaStreamDestination) {
+      recDest = ctx.createMediaStreamDestination();
+      comp.connect(recDest);
+    }
 
     // Bruit blanc réutilisé pour caisse claire, charleston, clap
     noiseBuf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
@@ -280,11 +331,15 @@
     el.classList.add('hit');
   }
 
-  function toggleLoop(pad, el) {
-    if (state.loops.has(pad.loop)) {
-      state.loops.delete(pad.loop);
-    } else {
+  // Active ou coupe une boucle, et renvoie son état final
+  function setLoop(i, on) {
+    const pad = PADS[i];
+    const el = padEls[i];
+
+    if (on) {
       state.loops.add(pad.loop);
+    } else {
+      state.loops.delete(pad.loop);
     }
 
     const active = state.loops.has(pad.loop);
@@ -296,19 +351,8 @@
     } else {
       startClock();
     }
-  }
 
-  function trigger(i) {
-    initAudio();
-    const pad = PADS[i];
-    const el = padEls[i];
-
-    if (pad.type === 'loop') {
-      toggleLoop(pad, el);
-    } else {
-      SOUNDS[pad.sound](ctx.currentTime + 0.01, filter, pad.freq);
-      flash(el);
-    }
+    return active;
   }
 
   function stopAll() {
@@ -320,6 +364,27 @@
       }
     });
     stopClock();
+  }
+
+  // Note une action dans l'enregistrement en cours
+  function record(ev) {
+    if (!rec.on) return;
+    ev.t = ctx.currentTime - rec.start;
+    rec.events.push(ev);
+  }
+
+  function trigger(i) {
+    initAudio();
+    const pad = PADS[i];
+
+    if (pad.type === 'loop') {
+      const active = setLoop(i, !state.loops.has(pad.loop));
+      record({ kind: 'loop', i, on: active });
+    } else {
+      SOUNDS[pad.sound](ctx.currentTime + 0.01, filter, pad.freq);
+      flash(padEls[i]);
+      record({ kind: 'hit', i });
+    }
   }
 
   /* ---------- Réglages ---------- */
@@ -348,6 +413,193 @@
     state.bpm = Number(tempo.value);
     document.getElementById('tempoOut').textContent = state.bpm;
     if (delay) delay.delayTime.setTargetAtTime((60 / state.bpm) * 0.75, ctx.currentTime, 0.05);
+  }
+
+  /* ---------- Enregistreur : affichage ---------- */
+
+  function setTime(seconds) {
+    const tenths = Math.floor(seconds * 10);
+    const m = Math.floor(tenths / 600);
+    const s = (tenths % 600) / 10;
+    const txt = String(m).padStart(2, '0') + ':' + s.toFixed(1).padStart(4, '0');
+    if (txt !== timeEl.textContent) timeEl.textContent = txt;
+  }
+
+  function setStatus(text) {
+    statusEl.textContent = text;
+  }
+
+  function idleStatus() {
+    if (rec.events.length === 0) {
+      setStatus('Appuie sur Enregistrer, puis joue.');
+    } else {
+      setStatus('Enregistré : ' + rec.events.length + ' actions, ' + rec.duration.toFixed(1) + ' s.');
+    }
+  }
+
+  function updateButtons() {
+    recBtn.textContent = rec.on ? '■ Arrêter' : '● Enregistrer';
+    recBtn.classList.toggle('rec', rec.on);
+    playBtn.textContent = play.on ? '■ Stop' : '▶ Lire';
+    playBtn.disabled = rec.events.length === 0 || rec.on;
+    dlBtn.disabled = !audioUrl || rec.on;
+    tempo.disabled = rec.on || play.on; // le tempo reste fixe pour que la lecture soit fidèle
+  }
+
+  function clearTimeline() {
+    timelineEl.querySelectorAll('.tick').forEach((tick) => tick.remove());
+    fillEl.style.width = '0';
+  }
+
+  function renderTimeline() {
+    clearTimeline();
+    const d = Math.max(rec.duration, 0.1);
+
+    rec.events.forEach((ev) => {
+      const tick = document.createElement('span');
+      tick.className = 'tick' + (ev.kind === 'loop' ? ' loop' : '');
+      tick.style.left = Math.min(99.5, (ev.t / d) * 100) + '%';
+      tick.style.background = PADS[ev.i].color;
+      timelineEl.appendChild(tick);
+    });
+  }
+
+  /* ---------- Enregistreur : enregistrement ---------- */
+
+  function startRecording() {
+    initAudio();
+    if (play.on) stopPlayback();
+
+    rec.events = [];
+    rec.bpm = state.bpm;
+    rec.duration = 0;
+    rec.start = ctx.currentTime;
+    rec.on = true;
+
+    // Les boucles déjà lancées font partie de la performance, dès le début
+    PADS.forEach((pad, i) => {
+      if (pad.type === 'loop' && state.loops.has(pad.loop)) {
+        rec.events.push({ kind: 'loop', i, on: true, t: 0 });
+      }
+    });
+
+    // Enregistrement du son lui-même (fichier téléchargeable)
+    if (audioUrl) {
+      URL.revokeObjectURL(audioUrl);
+      audioUrl = null;
+    }
+    if (mediaRec && mediaRec.state !== 'inactive') mediaRec.stop();
+
+    if (MIME && recDest) {
+      const chunks = [];
+      const r = new MediaRecorder(recDest.stream, { mimeType: MIME });
+      mediaRec = r;
+
+      r.ondataavailable = (e) => {
+        if (e.data.size) chunks.push(e.data);
+      };
+
+      r.onstop = () => {
+        if (mediaRec !== r || !chunks.length) return;
+        audioUrl = URL.createObjectURL(new Blob(chunks, { type: MIME }));
+        updateButtons();
+      };
+
+      r.start();
+    }
+
+    clearTimeline();
+    setTime(0);
+    setStatus('Enregistrement en cours… joue sur les pads.');
+    updateButtons();
+  }
+
+  function stopRecording() {
+    rec.on = false;
+    rec.duration = ctx.currentTime - rec.start;
+
+    // Petit délai pour ne pas couper la fin des sons
+    const r = mediaRec;
+    if (r) {
+      setTimeout(() => {
+        if (r.state !== 'inactive') r.stop();
+      }, 500);
+    }
+
+    setTime(rec.duration);
+    renderTimeline();
+    idleStatus();
+    updateButtons();
+  }
+
+  /* ---------- Enregistreur : lecture ---------- */
+
+  function scheduleEvent(ev, at) {
+    const wait = Math.max(0, (at - ctx.currentTime) * 1000);
+
+    if (ev.kind === 'hit') {
+      const pad = PADS[ev.i];
+      SOUNDS[pad.sound](at, filter, pad.freq);
+      play.timeouts.push(setTimeout(() => flash(padEls[ev.i]), wait));
+    } else {
+      play.timeouts.push(setTimeout(() => setLoop(ev.i, ev.on), wait));
+    }
+  }
+
+  function clearPlayTimeouts() {
+    play.timeouts.forEach(clearTimeout);
+    play.timeouts.length = 0;
+  }
+
+  function playScheduler() {
+    const elapsed = ctx.currentTime - play.start;
+
+    while (play.idx < rec.events.length && rec.events[play.idx].t <= elapsed + 0.1) {
+      scheduleEvent(rec.events[play.idx], play.start + rec.events[play.idx].t);
+      play.idx++;
+    }
+
+    if (elapsed >= rec.duration + 0.4) {
+      if (loopPlay.checked) {
+        clearPlayTimeouts();
+        stopAll();
+        play.idx = 0;
+        play.start = ctx.currentTime + 0.1;
+      } else {
+        stopPlayback();
+      }
+    }
+  }
+
+  function startPlayback() {
+    if (!rec.events.length) return;
+    initAudio();
+    if (rec.on) stopRecording();
+
+    stopAll();
+    tempo.value = rec.bpm;
+    applyTempo();
+
+    play.on = true;
+    play.idx = 0;
+    play.start = ctx.currentTime + 0.1;
+    play.timer = setInterval(playScheduler, 25);
+
+    setStatus('Lecture en cours…');
+    updateButtons();
+  }
+
+  function stopPlayback() {
+    clearInterval(play.timer);
+    play.timer = null;
+    clearPlayTimeouts();
+    play.on = false;
+
+    stopAll();
+    fillEl.style.width = '0';
+    setTime(rec.duration);
+    idleStatus();
+    updateButtons();
   }
 
   /* ---------- Construction de l'interface ---------- */
@@ -391,7 +643,7 @@
     stepEls.forEach((dot, i) => dot.classList.toggle('cur', i === step));
   }
 
-  /* ---------- Clavier ---------- */
+  /* ---------- Événements ---------- */
 
   window.addEventListener('keydown', (e) => {
     if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -399,15 +651,51 @@
     if (i !== -1) trigger(i);
   });
 
-  /* ---------- Réglages : événements ---------- */
-
   volume.addEventListener('input', applyVolume);
   filterSlider.addEventListener('input', applyFilter);
   echo.addEventListener('input', applyEcho);
   tempo.addEventListener('input', applyTempo);
-  stopBtn.addEventListener('click', stopAll);
 
-  /* ---------- Visualiseur ---------- */
+  recBtn.addEventListener('click', () => {
+    if (rec.on) {
+      stopRecording();
+    } else {
+      startRecording();
+    }
+  });
+
+  playBtn.addEventListener('click', () => {
+    if (play.on) {
+      stopPlayback();
+    } else {
+      startPlayback();
+    }
+  });
+
+  dlBtn.addEventListener('click', () => {
+    if (!audioUrl) return;
+    const a = document.createElement('a');
+    a.href = audioUrl;
+    a.download = 'performance-pads.' + EXT;
+    a.click();
+  });
+
+  stopBtn.addEventListener('click', () => {
+    if (play.on) {
+      stopPlayback();
+      return;
+    }
+
+    // Pendant un enregistrement, l'arrêt des boucles fait partie de la performance
+    PADS.forEach((pad, i) => {
+      if (pad.type === 'loop' && state.loops.has(pad.loop)) {
+        record({ kind: 'loop', i, on: false });
+      }
+    });
+    stopAll();
+  });
+
+  /* ---------- Visualiseur et minuteur ---------- */
 
   function resizeCanvas() {
     const r = canvas.getBoundingClientRect();
@@ -426,12 +714,23 @@
     const h = canvas.height;
     gfx.clearRect(0, 0, w, h);
 
-    // Suivi du pas en cours, synchronisé sur l'horloge audio
     if (ctx) {
+      // Suivi du pas en cours, synchronisé sur l'horloge audio
       while (state.queue.length && state.queue[0].time <= ctx.currentTime) {
         showStep(state.queue.shift().step);
       }
       analyser.getByteFrequencyData(freqData);
+
+      // Minuteur et barre de progression
+      if (rec.on) {
+        const elapsed = ctx.currentTime - rec.start;
+        setTime(elapsed);
+        if (elapsed >= MAX_REC) stopRecording();
+      } else if (play.on) {
+        const elapsed = Math.max(0, ctx.currentTime - play.start);
+        setTime(Math.min(elapsed, rec.duration));
+        fillEl.style.width = Math.min(100, (elapsed / Math.max(rec.duration, 0.1)) * 100) + '%';
+      }
     }
 
     const bars = 48;
@@ -447,4 +746,5 @@
   }
 
   draw();
+  updateButtons();
 })();
