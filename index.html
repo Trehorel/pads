@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PADS · Sampler en ligne</title>
+  <meta name="description" content="Un sampler dans le navigateur : 16 pads, des boucles, du filtre et de l'écho. Joue au clavier ou au doigt.">
+  <meta property="og:title" content="PADS · Sampler en ligne">
+  <meta property="og:description" content="16 pads, des boucles et des effets. Joue au clavier ou au doigt.">
+  <meta property="og:type" content="website">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🥁</text></svg>">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="app">
+    <header class="top">
+      <h1>PADS</h1>
+      <p>Touche un pad ou utilise le clavier. Les boucles s'activent et se coupent d'une pression.</p>
+    </header>
+
+    <canvas id="viz" aria-hidden="true"></canvas>
+
+    <section id="grid" class="grid" aria-label="Grille de pads"></section>
+
+    <div id="steps" class="steps" aria-hidden="true"></div>
+
+    <section class="controls" aria-label="Réglages">
+      <label class="ctrl">
+        <span>Volume</span>
+        <input id="volume" type="range" min="0" max="1" step="0.01" value="0.8">
+        <output id="volumeOut">80</output>
+      </label>
+      <label class="ctrl">
+        <span>Filtre</span>
+        <input id="filter" type="range" min="0" max="1" step="0.01" value="1">
+        <output id="filterOut">100</output>
+      </label>
+      <label class="ctrl">
+        <span>Écho</span>
+        <input id="echo" type="range" min="0" max="1" step="0.01" value="0">
+        <output id="echoOut">0</output>
+      </label>
+      <label class="ctrl">
+        <span>Tempo</span>
+        <input id="tempo" type="range" min="70" max="160" step="1" value="110">
+        <output id="tempoOut">110</output>
+      </label>
+    </section>
+
+    <button id="stop" class="stop" type="button">Tout arrêter</button>
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>
