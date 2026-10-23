@@ -4,26 +4,28 @@
   /* ---------- Définition des pads ---------- */
 
   const PADS = [
-    { name: 'Kick',         key: 'a', type: 'hit',  sound: 'kick',    color: '#ff5c5c' },
-    { name: 'Snare',        key: 'z', type: 'hit',  sound: 'snare',   color: '#ff5c5c' },
-    { name: 'Clap',         key: 'e', type: 'hit',  sound: 'clap',    color: '#ff5c5c' },
-    { name: 'Hat',          key: 'r', type: 'hit',  sound: 'hat',     color: '#ff5c5c' },
+    { name: 'Kick',     key: 'a', type: 'hit',  sound: 'kick',    color: '#ff5c5c' },
+    { name: 'Snare',    key: 'z', type: 'hit',  sound: 'snare',   color: '#ff5c5c' },
+    { name: 'Clap',     key: 'e', type: 'hit',  sound: 'clap',    color: '#ff5c5c' },
+    { name: 'Hat',      key: 'r', type: 'hit',  sound: 'hat',     color: '#ff5c5c' },
 
-    { name: 'Open hat',     key: 'q', type: 'hit',  sound: 'openhat', color: '#ffb23c' },
-    { name: 'Tom',          key: 's', type: 'hit',  sound: 'tom',     color: '#ffb23c' },
-    { name: 'Rim',          key: 'd', type: 'hit',  sound: 'rim',     color: '#ffb23c' },
-    { name: 'Cowbell',      key: 'f', type: 'hit',  sound: 'cowbell', color: '#ffb23c' },
+    { name: 'Open hat', key: 'q', type: 'hit',  sound: 'openhat', color: '#ffb23c' },
+    { name: 'Tom',      key: 's', type: 'hit',  sound: 'tom',     color: '#ffb23c' },
+    { name: 'Rim',      key: 'd', type: 'hit',  sound: 'rim',     color: '#ffb23c' },
+    { name: 'Cowbell',  key: 'f', type: 'hit',  sound: 'cowbell', color: '#ffb23c' },
 
-    { name: 'Basse',        key: 'w', type: 'hit',  sound: 'bass',    color: '#3cd6ff' },
-    { name: 'Accord',       key: 'x', type: 'hit',  sound: 'stab',    color: '#3cd6ff' },
-    { name: 'Pluck',        key: 'c', type: 'hit',  sound: 'pluck',   color: '#3cd6ff' },
-    { name: 'Laser',        key: 'v', type: 'hit',  sound: 'laser',   color: '#3cd6ff' },
+    { name: 'Basse',    key: 'w', type: 'hit',  sound: 'bass',    color: '#3cd6ff' },
+    { name: 'Accord',   key: 'x', type: 'hit',  sound: 'stab',    color: '#3cd6ff' },
+    { name: 'Pluck',    key: 'c', type: 'hit',  sound: 'pluck',   color: '#3cd6ff' },
+    { name: 'Laser',    key: 'v', type: 'hit',  sound: 'laser',   color: '#3cd6ff' },
 
-    { name: 'Boucle beat',  key: 't', type: 'loop', loop: 'beat',     color: '#b57cff' },
-    { name: 'Boucle hats',  key: 'y', type: 'loop', loop: 'hats',     color: '#b57cff' },
-    { name: 'Boucle basse', key: 'u', type: 'loop', loop: 'bass',     color: '#b57cff' },
-    { name: 'Boucle arp',   key: 'i', type: 'loop', loop: 'arp',      color: '#b57cff' }
+    { name: 'Beat',     key: 't', type: 'loop', loop: 'beat',     color: '#b57cff' },
+    { name: 'Hats',     key: 'y', type: 'loop', loop: 'hats',     color: '#b57cff' },
+    { name: 'Basse',    key: 'u', type: 'loop', loop: 'bass',     color: '#b57cff' },
+    { name: 'Arp',      key: 'i', type: 'loop', loop: 'arp',      color: '#b57cff' }
   ];
+
+  const REDUCED = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   /* ---------- État audio ---------- */
 
@@ -91,8 +93,14 @@
   const tempo = document.getElementById('tempo');
   const stopBtn = document.getElementById('stop');
 
+  const audioState = document.getElementById('audioState');
+  const bpmRead = document.getElementById('bpmRead');
+  const loopRead = document.getElementById('loopRead');
+
   const recBtn = document.getElementById('recBtn');
+  const recLabel = document.getElementById('recLabel');
   const playBtn = document.getElementById('playBtn');
+  const playLabel = document.getElementById('playLabel');
   const dlBtn = document.getElementById('dlBtn');
   const loopPlay = document.getElementById('loopPlay');
   const timelineEl = document.getElementById('timeline');
@@ -160,6 +168,9 @@
     applyFilter();
     applyEcho();
     applyTempo();
+
+    audioState.textContent = 'Audio actif';
+    audioState.classList.add('on');
   }
 
   /* ---------- Briques de synthèse ---------- */
@@ -329,6 +340,13 @@
     el.classList.remove('hit');
     void el.offsetWidth; // relance l'animation
     el.classList.add('hit');
+    clearTimeout(el._hitTimer);
+    el._hitTimer = setTimeout(() => el.classList.remove('hit'), 300);
+  }
+
+  function updateLoopRead() {
+    const n = state.loops.size;
+    loopRead.textContent = n === 0 ? 'Aucune boucle' : n + (n > 1 ? ' boucles' : ' boucle');
   }
 
   // Active ou coupe une boucle, et renvoie son état final
@@ -352,6 +370,7 @@
       startClock();
     }
 
+    updateLoopRead();
     return active;
   }
 
@@ -364,6 +383,7 @@
       }
     });
     stopClock();
+    updateLoopRead();
   }
 
   // Note une action dans l'enregistrement en cours
@@ -389,14 +409,22 @@
 
   /* ---------- Réglages ---------- */
 
+  // Colore la partie gauche du curseur
+  function paintRange(input) {
+    const p = ((input.value - input.min) / (input.max - input.min)) * 100;
+    input.style.setProperty('--p', p + '%');
+  }
+
   function applyVolume() {
     document.getElementById('volumeOut').textContent = Math.round(volume.value * 100);
+    paintRange(volume);
     if (master) master.gain.setTargetAtTime(volume.value, ctx.currentTime, 0.02);
   }
 
   function applyFilter() {
     const v = Number(filterSlider.value);
     document.getElementById('filterOut').textContent = Math.round(v * 100);
+    paintRange(filterSlider);
     if (filter) {
       const freq = 200 * Math.pow(90, v); // de 200 Hz à 18 000 Hz
       filter.frequency.setTargetAtTime(freq, ctx.currentTime, 0.02);
@@ -406,12 +434,16 @@
   function applyEcho() {
     const v = Number(echo.value);
     document.getElementById('echoOut').textContent = Math.round(v * 100);
+    paintRange(echo);
     if (delayGain) delayGain.gain.setTargetAtTime(v * 0.6, ctx.currentTime, 0.02);
   }
 
   function applyTempo() {
     state.bpm = Number(tempo.value);
     document.getElementById('tempoOut').textContent = state.bpm;
+    bpmRead.textContent = state.bpm + ' BPM';
+    paintRange(tempo);
+    document.documentElement.style.setProperty('--beat', (60 / state.bpm).toFixed(3) + 's');
     if (delay) delay.delayTime.setTargetAtTime((60 / state.bpm) * 0.75, ctx.currentTime, 0.05);
   }
 
@@ -438,9 +470,10 @@
   }
 
   function updateButtons() {
-    recBtn.textContent = rec.on ? '■ Arrêter' : '● Enregistrer';
+    recLabel.textContent = rec.on ? 'Arrêter' : 'Enregistrer';
     recBtn.classList.toggle('rec', rec.on);
-    playBtn.textContent = play.on ? '■ Stop' : '▶ Lire';
+    playLabel.textContent = play.on ? 'Stop' : 'Lire';
+    playBtn.classList.toggle('playing', play.on);
     playBtn.disabled = rec.events.length === 0 || rec.on;
     dlBtn.disabled = !audioUrl || rec.on;
     tempo.disabled = rec.on || play.on; // le tempo reste fixe pour que la lecture soit fidèle
@@ -609,9 +642,16 @@
     btn.type = 'button';
     btn.className = 'pad';
     btn.style.setProperty('--c', pad.color);
+    btn.setAttribute(
+      'aria-label',
+      (pad.type === 'loop' ? 'Boucle ' : '') + pad.name + ' (touche ' + pad.key.toUpperCase() + ')'
+    );
+
     btn.innerHTML =
+      '<i class="led"></i>' +
       '<span class="name">' + pad.name + '</span>' +
-      '<span class="key">' + pad.key + '</span>';
+      (pad.type === 'loop' ? '<span class="tag">Boucle</span>' : '') +
+      '<kbd class="key">' + pad.key + '</kbd>';
 
     if (pad.type === 'loop') btn.setAttribute('aria-pressed', 'false');
 
@@ -695,7 +735,7 @@
     stopAll();
   });
 
-  /* ---------- Visualiseur et minuteur ---------- */
+  /* ---------- Visualiseur, minuteur et lueur de fond ---------- */
 
   function resizeCanvas() {
     const r = canvas.getBoundingClientRect();
@@ -707,12 +747,37 @@
   window.addEventListener('resize', resizeCanvas);
   resizeCanvas();
 
-  function draw() {
+  let lastLevel = -1;
+
+  // Règle la lueur de fond selon le volume du son (arrondi pour limiter les mises à jour)
+  function setLevel(v) {
+    const r = Math.round(v * 50) / 50;
+    if (r !== lastLevel) {
+      lastLevel = r;
+      document.body.style.setProperty('--level', r);
+    }
+  }
+
+  function bar(x, y, w, h) {
+    gfx.beginPath();
+    if (gfx.roundRect) {
+      gfx.roundRect(x, y, w, h, w / 2);
+    } else {
+      gfx.rect(x, y, w, h);
+    }
+    gfx.fill();
+  }
+
+  function draw(now) {
     requestAnimationFrame(draw);
 
+    const d = window.devicePixelRatio || 1;
     const w = canvas.width;
     const h = canvas.height;
+    const mid = h / 2;
     gfx.clearRect(0, 0, w, h);
+
+    let level = 0;
 
     if (ctx) {
       // Suivi du pas en cours, synchronisé sur l'horloge audio
@@ -720,6 +785,10 @@
         showStep(state.queue.shift().step);
       }
       analyser.getByteFrequencyData(freqData);
+
+      let sum = 0;
+      for (let i = 0; i < 12; i++) sum += freqData[i];
+      level = Math.min(1, (sum / (12 * 255)) * 1.4);
 
       // Minuteur et barre de progression
       if (rec.on) {
@@ -733,18 +802,43 @@
       }
     }
 
-    const bars = 48;
-    const gap = 3 * (window.devicePixelRatio || 1);
+    if (!REDUCED) setLevel(level);
+
+    // Ligne centrale
+    gfx.fillStyle = 'rgba(255, 255, 255, 0.05)';
+    gfx.fillRect(0, mid - d / 2, w, d);
+
+    // Barres symétriques, du vert au violet
+    const bars = 40;
+    const gap = 4 * d;
     const barW = (w - gap * (bars - 1)) / bars;
 
     for (let i = 0; i < bars; i++) {
-      const v = freqData ? freqData[i] / 255 : 0;
-      const barH = Math.max(4, v * h * 0.95);
-      gfx.fillStyle = 'hsl(' + (80 + i * 2.2) + ', 100%, ' + (45 + v * 20) + '%)';
-      gfx.fillRect(i * (barW + gap), h - barH, barW, barH);
+      let v = freqData ? freqData[i] / 255 : 0;
+
+      // Léger souffle quand rien ne joue
+      if (v < 0.03) v = REDUCED ? 0.03 : 0.03 + 0.02 * Math.sin(now / 600 + i / 3);
+
+      const half = Math.max(2 * d, v * mid * 0.92);
+      const color = 'hsl(' + (80 + i * 5.2) + ', 100%, ' + (52 + v * 12) + '%)';
+
+      gfx.fillStyle = color;
+      gfx.shadowColor = color;
+      gfx.shadowBlur = v > 0.1 ? 10 * d * v : 0;
+      bar(i * (barW + gap), mid - half, barW, half * 2);
     }
+
+    gfx.shadowBlur = 0;
   }
 
-  draw();
+  requestAnimationFrame(draw);
+
+  /* ---------- État initial ---------- */
+
+  applyVolume();
+  applyFilter();
+  applyEcho();
+  applyTempo();
+  updateLoopRead();
   updateButtons();
 })();
