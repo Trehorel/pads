@@ -2,7 +2,8 @@
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0a0a0f">
   <title>PADS · Sampler en ligne</title>
   <meta name="description" content="Un sampler dans le navigateur : 16 pads, des boucles, du filtre et de l'écho. Joue au clavier ou au doigt, enregistre et télécharge ta performance.">
   <meta property="og:title" content="PADS · Sampler en ligne">
@@ -13,63 +14,105 @@
 </head>
 <body>
   <main class="app">
-    <header class="top">
-      <h1>PADS</h1>
-      <p>Touche un pad ou utilise le clavier. Les boucles s'activent et se coupent d'une pression.</p>
-    </header>
+    <div class="device">
 
-    <canvas id="viz" aria-hidden="true"></canvas>
+      <header class="top">
+        <div class="brand">
+          <h1 class="logo">PADS</h1>
+          <p class="sub">Sampler en ligne · 16 pads</p>
+        </div>
+        <span id="audioState" class="pill">Audio en veille</span>
+      </header>
 
-    <section id="grid" class="grid" aria-label="Grille de pads"></section>
-
-    <div id="steps" class="steps" aria-hidden="true"></div>
-
-    <section class="recorder" aria-label="Enregistreur">
-      <div class="rec-row">
-        <button id="recBtn" class="btn" type="button">● Enregistrer</button>
-        <button id="playBtn" class="btn" type="button" disabled>▶ Lire</button>
-        <button id="dlBtn" class="btn" type="button" disabled>⤓ Télécharger</button>
+      <div class="screen">
+        <canvas id="viz" aria-hidden="true"></canvas>
+        <div class="readout" aria-hidden="true">
+          <span id="bpmRead">110 BPM</span>
+          <span id="loopRead">Aucune boucle</span>
+        </div>
       </div>
 
-      <div id="timeline" class="timeline" aria-hidden="true">
-        <div id="fill" class="fill"></div>
-      </div>
+      <ul class="legend" aria-hidden="true">
+        <li style="--c: #ff5c5c">Batterie</li>
+        <li style="--c: #ffb23c">Percussions</li>
+        <li style="--c: #3cd6ff">Synthés</li>
+        <li style="--c: #b57cff">Boucles</li>
+      </ul>
 
-      <div class="rec-info">
-        <output id="time">00:00.0</output>
-        <label class="check">
-          <input id="loopPlay" type="checkbox">
-          Boucler la lecture
-        </label>
-      </div>
+      <section id="grid" class="grid" aria-label="Grille de pads"></section>
 
-      <p id="recStatus" class="status" aria-live="polite">Appuie sur Enregistrer, puis joue.</p>
-    </section>
+      <div id="steps" class="steps" aria-hidden="true"></div>
 
-    <section class="controls" aria-label="Réglages">
-      <label class="ctrl">
-        <span>Volume</span>
-        <input id="volume" type="range" min="0" max="1" step="0.01" value="0.8">
-        <output id="volumeOut">80</output>
-      </label>
-      <label class="ctrl">
-        <span>Filtre</span>
-        <input id="filter" type="range" min="0" max="1" step="0.01" value="1">
-        <output id="filterOut">100</output>
-      </label>
-      <label class="ctrl">
-        <span>Écho</span>
-        <input id="echo" type="range" min="0" max="1" step="0.01" value="0">
-        <output id="echoOut">0</output>
-      </label>
-      <label class="ctrl">
-        <span>Tempo</span>
-        <input id="tempo" type="range" min="70" max="160" step="1" value="110">
-        <output id="tempoOut">110</output>
-      </label>
-    </section>
+      <section class="panel recorder" aria-label="Enregistreur">
+        <div class="panel-head">
+          <h2 class="panel-title">Enregistreur</h2>
+          <output id="time" class="lcd">00:00.0</output>
+        </div>
 
-    <button id="stop" class="stop" type="button">Tout arrêter</button>
+        <div class="rec-row">
+          <button id="recBtn" class="btn btn-rec" type="button">
+            <svg class="ico ico-rec" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5"/></svg>
+            <svg class="ico ico-stop" viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" rx="1.5"/></svg>
+            <span id="recLabel">Enregistrer</span>
+          </button>
+
+          <button id="playBtn" class="btn" type="button" disabled>
+            <svg class="ico ico-play" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 3l8 5-8 5z"/></svg>
+            <svg class="ico ico-stop" viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" rx="1.5"/></svg>
+            <span id="playLabel">Lire</span>
+          </button>
+
+          <button id="dlBtn" class="btn" type="button" disabled>
+            <svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v8M4.5 7L8 10.5 11.5 7M3 13h10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span>Télécharger</span>
+          </button>
+        </div>
+
+        <div id="timeline" class="timeline" aria-hidden="true">
+          <div id="fill" class="fill"></div>
+        </div>
+
+        <div class="rec-info">
+          <p id="recStatus" class="status" aria-live="polite">Appuie sur Enregistrer, puis joue.</p>
+          <label class="check">
+            <input id="loopPlay" type="checkbox">
+            Boucler la lecture
+          </label>
+        </div>
+      </section>
+
+      <section class="panel" aria-label="Réglages">
+        <div class="panel-head">
+          <h2 class="panel-title">Réglages</h2>
+        </div>
+
+        <div class="controls">
+          <label class="ctrl">
+            <span class="ctrl-top"><span>Volume</span><output id="volumeOut">80</output></span>
+            <input id="volume" type="range" min="0" max="1" step="0.01" value="0.8">
+          </label>
+
+          <label class="ctrl">
+            <span class="ctrl-top"><span>Filtre</span><output id="filterOut">100</output></span>
+            <input id="filter" type="range" min="0" max="1" step="0.01" value="1">
+          </label>
+
+          <label class="ctrl">
+            <span class="ctrl-top"><span>Écho</span><output id="echoOut">0</output></span>
+            <input id="echo" type="range" min="0" max="1" step="0.01" value="0">
+          </label>
+
+          <label class="ctrl">
+            <span class="ctrl-top"><span>Tempo</span><output id="tempoOut">110</output></span>
+            <input id="tempo" type="range" min="70" max="160" step="1" value="110">
+          </label>
+        </div>
+      </section>
+
+      <button id="stop" class="stop" type="button">Tout arrêter</button>
+
+      <p class="hint">Clavier : A Z E R · Q S D F · W X C V · T Y U I</p>
+    </div>
   </main>
 
   <script src="script.js"></script>
