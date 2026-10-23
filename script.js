@@ -48,6 +48,15 @@
     queue: []
   };
 
+  /* ---------- Sons personnels ---------- */
+
+  const MAX_SAMPLE_BYTES = 15 * 1024 * 1024; // 15 Mo
+  const MAX_SAMPLE_SECONDS = 10;
+
+  const samples = new Array(PADS.length).fill(null); // { buffer, label } par pad
+  let editing = false;
+  let pickIndex = -1;
+
   /* ---------- État de l'enregistreur ---------- */
 
   const MAX_REC = 300; // durée maximale d'un enregistrement, en secondes
@@ -65,7 +74,8 @@
     start: 0,
     idx: 0,
     timer: null,
-    timeouts: []
+    timeouts: [],
+    saved: null
   };
 
   // Format audio pris en charge par le navigateur pour le téléchargement
@@ -97,6 +107,12 @@
   const bpmRead = document.getElementById('bpmRead');
   const loopRead = document.getElementById('loopRead');
 
+  const editBtn = document.getElementById('editBtn');
+  const editHint = document.getElementById('editHint');
+  const resetSamples = document.getElementById('resetSamples');
+  const fileInput = document.getElementById('fileInput');
+  const toastEl = document.getElementById('toast');
+
   const recBtn = document.getElementById('recBtn');
   const recLabel = document.getElementById('recLabel');
   const playBtn = document.getElementById('playBtn');
@@ -112,6 +128,24 @@
   const stepEls = [];
 
   if (!MIME) dlBtn.hidden = true;
+
+  // Réglages qui sont enregistrés avec la performance
+  const FX = {
+    volume: { input: volume, apply: applyVolume },
+    filter: { input: filterSlider, apply: applyFilter },
+    echo:   { input: echo, apply: applyEcho }
+  };
+
+  /* ---------- Messages ---------- */
+
+  let toastTimer = null;
+
+  function toast(message) {
+    toastEl.textContent = message;
+    toastEl.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2600);
+  }
 
   /* ---------- Initialisation de l'audio ---------- */
 
@@ -272,6 +306,21 @@
     }
   };
 
+  // Joue le son d'un pad : le son personnel s'il y en a un, sinon le son d'origine
+  function playPad(i, t) {
+    const pad = PADS[i];
+    const sample = samples[i];
+
+    if (sample) {
+      const src = ctx.createBufferSource();
+      src.buffer = sample.buffer;
+      src.connect(filter);
+      src.start(t, 0, Math.min(sample.buffer.duration, MAX_SAMPLE_SECONDS));
+    } else {
+      SOUNDS[pad.sound](t, filter, pad.freq);
+    }
+  }
+
   /* ---------- Boucles (16 pas) ---------- */
 
   const BASS_LINE = [55, 0, 0, 55, 0, 0, 65.4, 0, 0, 55, 0, 73.4, 0, 0, 65.4, 0];
@@ -401,9 +450,73 @@
       const active = setLoop(i, !state.loops.has(pad.loop));
       record({ kind: 'loop', i, on: active });
     } else {
-      SOUNDS[pad.sound](ctx.currentTime + 0.01, filter, pad.freq);
+      playPad(i, ctx.currentTime + 0.01);
       flash(padEls[i]);
       record({ kind: 'hit', i });
+    }
+  }
+
+  // Arrête les boucles (et note l'arrêt si on enregistre)
+  function stopAction() {
+    if (play.on) {
+      stopPlayback();
+      return;
+    }
+
+    PADS.forEach((pad, i) => {
+      if (pad.type === 'loop' && state.loops.has(pad.loop)) {
+        record({ kind: 'loop', i, on: false });
+      }
+    });
+    stopAll();
+  }
+
+  /* ---------- Sons personnels : chargement ---------- */
+
+  function setPadLabel(i) {
+    const el = padEls[i];
+    const sample = samples[i];
+
+    el.classList.toggle('custom', Boolean(sample));
+    el.querySelector('.name').textContent = sample ? sample.label : PADS[i].name;
+    el.querySelector('.tag').textContent = sample ? 'Perso' : (PADS[i].type === 'loop' ? 'Boucle' : '');
+    el.setAttribute(
+      'aria-label',
+      (PADS[i].type === 'loop' ? 'Boucle ' : '') + PADS[i].name +
+      (sample ? ' (son perso)' : '') +
+      ' (touche ' + PADS[i].key.toUpperCase() + ')'
+    );
+  }
+
+  async function loadSample(i, file) {
+    if (!file) return;
+
+    if (PADS[i].type !== 'hit') {
+      toast('Les boucles ne peuvent pas recevoir de son perso.');
+      return;
+    }
+    if (file.type && !file.type.startsWith('audio/')) {
+      toast('Ce fichier n\'est pas un son.');
+      return;
+    }
+    if (file.size > MAX_SAMPLE_BYTES) {
+      toast('Fichier trop lourd (15 Mo maximum).');
+      return;
+    }
+
+    initAudio();
+
+    try {
+      const buffer = await ctx.decodeAudioData(await file.arrayBuffer());
+      const label = file.name.replace(/\.[^.]+$/, '').slice(0, 14);
+
+      samples[i] = { buffer, label };
+      setPadLabel(i);
+      playPad(i, ctx.currentTime + 0.01);
+      flash(padEls[i]);
+      toast('Son chargé sur « ' + PADS[i].name + ' ».');
+    } catch (err) {
+      toast('Impossible de lire ce fichier audio.');
     }
   }
 
@@ -447,7 +560,22 @@
     if (delay) delay.delayTime.setTargetAtTime((60 / state.bpm) * 0.75, ctx.currentTime, 0.05);
   }
 
+  // Note un changement de réglage pendant l'enregistrement (limité à un toutes les 60 ms)
+  const fxLast = {};
+
+  function recordFx(name, force) {
+    if (!rec.on) return;
+    const now = ctx.currentTime;
+    if (!force && fxLast[name] !== undefined && now - fxLast[name] < 0.06) return;
+    fxLast[name] = now;
+    record({ kind: 'fx', name, value: FX[name].input.value });
+  }
+
   /* ---------- Enregistreur : affichage ---------- */
+
+  function hasActions() {
+    return rec.events.some((ev) => ev.kind !== 'fx');
+  }
 
   function setTime(seconds) {
     const tenths = Math.floor(seconds * 10);
@@ -462,10 +590,12 @@
   }
 
   function idleStatus() {
-    if (rec.events.length === 0) {
+    const n = rec.events.filter((ev) => ev.kind !== 'fx').length;
+
+    if (n === 0) {
       setStatus('Appuie sur Enregistrer, puis joue.');
     } else {
-      setStatus('Enregistré : ' + rec.events.length + ' actions, ' + rec.duration.toFixed(1) + ' s.');
+      setStatus('Enregistré : ' + n + ' actions, ' + rec.duration.toFixed(1) + ' s.');
     }
   }
 
@@ -474,7 +604,7 @@
     recBtn.classList.toggle('rec', rec.on);
     playLabel.textContent = play.on ? 'Stop' : 'Lire';
     playBtn.classList.toggle('playing', play.on);
-    playBtn.disabled = rec.events.length === 0 || rec.on;
+    playBtn.disabled = !hasActions() || rec.on;
     dlBtn.disabled = !audioUrl || rec.on;
     tempo.disabled = rec.on || play.on; // le tempo reste fixe pour que la lecture soit fidèle
   }
@@ -489,10 +619,13 @@
     const d = Math.max(rec.duration, 0.1);
 
     rec.events.forEach((ev) => {
+      // Les réglages de départ (à 0 s) ne sont pas affichés
+      if (ev.kind === 'fx' && ev.t === 0) return;
+
       const tick = document.createElement('span');
-      tick.className = 'tick' + (ev.kind === 'loop' ? ' loop' : '');
+      tick.className = 'tick' + (ev.kind === 'loop' ? ' loop' : ev.kind === 'fx' ? ' fx' : '');
       tick.style.left = Math.min(99.5, (ev.t / d) * 100) + '%';
-      tick.style.background = PADS[ev.i].color;
+      tick.style.background = ev.kind === 'fx' ? '#8b8b9c' : PADS[ev.i].color;
       timelineEl.appendChild(tick);
     });
   }
@@ -508,6 +641,12 @@
     rec.duration = 0;
     rec.start = ctx.currentTime;
     rec.on = true;
+
+    // Réglages de départ, pour que la lecture retrouve le même son
+    Object.keys(FX).forEach((name) => {
+      delete fxLast[name];
+      rec.events.push({ kind: 'fx', name, value: FX[name].input.value, t: 0 });
+    });
 
     // Les boucles déjà lancées font partie de la performance, dès le début
     PADS.forEach((pad, i) => {
@@ -565,17 +704,29 @@
     updateButtons();
   }
 
+  function toggleRecording() {
+    if (rec.on) {
+      stopRecording();
+    } else {
+      startRecording();
+    }
+  }
+
   /* ---------- Enregistreur : lecture ---------- */
 
   function scheduleEvent(ev, at) {
     const wait = Math.max(0, (at - ctx.currentTime) * 1000);
 
     if (ev.kind === 'hit') {
-      const pad = PADS[ev.i];
-      SOUNDS[pad.sound](at, filter, pad.freq);
+      playPad(ev.i, at);
       play.timeouts.push(setTimeout(() => flash(padEls[ev.i]), wait));
-    } else {
+    } else if (ev.kind === 'loop') {
       play.timeouts.push(setTimeout(() => setLoop(ev.i, ev.on), wait));
+    } else {
+      play.timeouts.push(setTimeout(() => {
+        FX[ev.name].input.value = ev.value;
+        FX[ev.name].apply();
+      }, wait));
     }
   }
 
@@ -605,13 +756,19 @@
   }
 
   function startPlayback() {
-    if (!rec.events.length) return;
+    if (!hasActions()) return;
     initAudio();
     if (rec.on) stopRecording();
 
     stopAll();
     tempo.value = rec.bpm;
     applyTempo();
+
+    // Mémorise les réglages actuels, pour les rétablir à la fin de la lecture
+    play.saved = {};
+    Object.keys(FX).forEach((name) => {
+      play.saved[name] = FX[name].input.value;
+    });
 
     play.on = true;
     play.idx = 0;
@@ -628,6 +785,14 @@
     clearPlayTimeouts();
     play.on = false;
 
+    if (play.saved) {
+      Object.keys(play.saved).forEach((name) => {
+        FX[name].input.value = play.saved[name];
+        FX[name].apply();
+      });
+      play.saved = null;
+    }
+
     stopAll();
     fillEl.style.width = '0';
     setTime(rec.duration);
@@ -635,38 +800,63 @@
     updateButtons();
   }
 
+  function togglePlayback() {
+    if (play.on) {
+      stopPlayback();
+    } else if (hasActions() && !rec.on) {
+      startPlayback();
+    }
+  }
+
   /* ---------- Construction de l'interface ---------- */
 
   PADS.forEach((pad, i) => {
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'pad';
+    btn.className = 'pad' + (pad.type === 'loop' ? ' is-loop' : '');
     btn.style.setProperty('--c', pad.color);
-    btn.setAttribute(
-      'aria-label',
-      (pad.type === 'loop' ? 'Boucle ' : '') + pad.name + ' (touche ' + pad.key.toUpperCase() + ')'
-    );
 
     btn.innerHTML =
       '<i class="led"></i>' +
-      '<span class="name">' + pad.name + '</span>' +
-      (pad.type === 'loop' ? '<span class="tag">Boucle</span>' : '') +
+      '<span class="name"></span>' +
+      '<span class="tag"></span>' +
       '<kbd class="key">' + pad.key + '</kbd>';
 
     if (pad.type === 'loop') btn.setAttribute('aria-pressed', 'false');
 
     btn.addEventListener('pointerdown', (e) => {
+      // En mode édition, un pad ordinaire ouvre le sélecteur de fichier (voir « click »)
+      if (editing && pad.type === 'hit') return;
       e.preventDefault();
       trigger(i);
     });
 
-    // Activation au clavier (Entrée ou Espace sur un pad sélectionné)
     btn.addEventListener('click', (e) => {
+      if (editing && pad.type === 'hit') {
+        pickIndex = i;
+        fileInput.value = '';
+        fileInput.click();
+        return;
+      }
+      // Activation au clavier (Entrée ou Espace sur un pad sélectionné)
       if (e.detail === 0) trigger(i);
+    });
+
+    // Glisser-déposer d'un fichier audio sur un pad
+    btn.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      btn.classList.add('drop');
+    });
+    btn.addEventListener('dragleave', () => btn.classList.remove('drop'));
+    btn.addEventListener('drop', (e) => {
+      e.preventDefault();
+      btn.classList.remove('drop');
+      loadSample(i, e.dataTransfer.files[0]);
     });
 
     gridEl.appendChild(btn);
     padEls.push(btn);
+    setPadLabel(i);
   });
 
   for (let i = 0; i < 16; i++) {
@@ -685,32 +875,51 @@
 
   /* ---------- Événements ---------- */
 
+  // Évite que le navigateur ouvre un fichier lâché à côté d'un pad
+  window.addEventListener('dragover', (e) => e.preventDefault());
+  window.addEventListener('drop', (e) => e.preventDefault());
+
   window.addEventListener('keydown', (e) => {
     if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+
+    const tag = document.activeElement ? document.activeElement.tagName : '';
+    const onControl = tag === 'INPUT' || tag === 'BUTTON' || tag === 'SELECT';
+
+    if (e.key === 'Escape') {
+      stopAction();
+      return;
+    }
+
+    // Espace et Entrée ne servent de raccourcis que si aucun bouton n'est sélectionné
+    if (!onControl && e.code === 'Space') {
+      e.preventDefault();
+      toggleRecording();
+      return;
+    }
+
+    if (!onControl && e.key === 'Enter') {
+      e.preventDefault();
+      togglePlayback();
+      return;
+    }
+
     const i = PADS.findIndex((pad) => pad.key === e.key.toLowerCase());
     if (i !== -1) trigger(i);
   });
 
-  volume.addEventListener('input', applyVolume);
-  filterSlider.addEventListener('input', applyFilter);
-  echo.addEventListener('input', applyEcho);
+  Object.keys(FX).forEach((name) => {
+    const fx = FX[name];
+    fx.input.addEventListener('input', () => {
+      fx.apply();
+      recordFx(name, false);
+    });
+    fx.input.addEventListener('change', () => recordFx(name, true));
+  });
+
   tempo.addEventListener('input', applyTempo);
 
-  recBtn.addEventListener('click', () => {
-    if (rec.on) {
-      stopRecording();
-    } else {
-      startRecording();
-    }
-  });
-
-  playBtn.addEventListener('click', () => {
-    if (play.on) {
-      stopPlayback();
-    } else {
-      startPlayback();
-    }
-  });
+  recBtn.addEventListener('click', toggleRecording);
+  playBtn.addEventListener('click', togglePlayback);
 
   dlBtn.addEventListener('click', () => {
     if (!audioUrl) return;
@@ -720,19 +929,25 @@
     a.click();
   });
 
-  stopBtn.addEventListener('click', () => {
-    if (play.on) {
-      stopPlayback();
-      return;
-    }
+  stopBtn.addEventListener('click', stopAction);
 
-    // Pendant un enregistrement, l'arrêt des boucles fait partie de la performance
-    PADS.forEach((pad, i) => {
-      if (pad.type === 'loop' && state.loops.has(pad.loop)) {
-        record({ kind: 'loop', i, on: false });
-      }
-    });
-    stopAll();
+  editBtn.addEventListener('click', () => {
+    editing = !editing;
+    editBtn.setAttribute('aria-pressed', String(editing));
+    editBtn.classList.toggle('active', editing);
+    gridEl.classList.toggle('editing', editing);
+    editHint.hidden = !editing;
+  });
+
+  fileInput.addEventListener('change', () => {
+    const file = fileInput.files[0];
+    if (file && pickIndex >= 0) loadSample(pickIndex, file);
+  });
+
+  resetSamples.addEventListener('click', () => {
+    samples.fill(null);
+    PADS.forEach((pad, i) => setPadLabel(i));
+    toast('Sons d\'origine rétablis.');
   });
 
   /* ---------- Visualiseur, minuteur et lueur de fond ---------- */
