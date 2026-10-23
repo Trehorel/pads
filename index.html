@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#0a0a0f">
   <title>PADS · Sampler en ligne</title>
-  <meta name="description" content="Un sampler dans le navigateur : 16 pads, des boucles, du filtre et de l'écho. Joue au clavier ou au doigt, enregistre et télécharge ta performance.">
+  <meta name="description" content="Un sampler dans le navigateur : 16 pads, tes propres sons, des boucles, du filtre et de l'écho. Joue au clavier ou au doigt, enregistre et télécharge ta performance.">
   <meta property="og:title" content="PADS · Sampler en ligne">
-  <meta property="og:description" content="16 pads, des boucles et des effets. Joue, enregistre, télécharge.">
+  <meta property="og:description" content="16 pads, tes propres sons, des boucles et des effets. Joue, enregistre, télécharge.">
   <meta property="og:type" content="website">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🥁</text></svg>">
   <link rel="stylesheet" href="style.css">
@@ -32,12 +32,21 @@
         </div>
       </div>
 
-      <ul class="legend" aria-hidden="true">
-        <li style="--c: #ff5c5c">Batterie</li>
-        <li style="--c: #ffb23c">Percussions</li>
-        <li style="--c: #3cd6ff">Synthés</li>
-        <li style="--c: #b57cff">Boucles</li>
-      </ul>
+      <div class="bar">
+        <ul class="legend" aria-hidden="true">
+          <li style="--c: #ff5c5c">Batterie</li>
+          <li style="--c: #ffb23c">Percussions</li>
+          <li style="--c: #3cd6ff">Synthés</li>
+          <li style="--c: #b57cff">Boucles</li>
+        </ul>
+        <button id="editBtn" class="chip" type="button" aria-pressed="false">✎ Mode édition</button>
+      </div>
+
+      <p id="editHint" class="edit-hint" hidden>
+        Touche un pad pour y charger un son de ton appareil, ou glisse un fichier audio dessus.
+        Les sons chargés disparaissent si tu recharges la page.
+        <button id="resetSamples" class="link" type="button">Rétablir les sons d'origine</button>
+      </p>
 
       <section id="grid" class="grid" aria-label="Grille de pads"></section>
 
@@ -111,9 +120,15 @@
 
       <button id="stop" class="stop" type="button">Tout arrêter</button>
 
-      <p class="hint">Clavier : A Z E R · Q S D F · W X C V · T Y U I</p>
+      <p class="hint">
+        Clavier : A Z E R · Q S D F · W X C V · T Y U I<br>
+        Espace : enregistrer · Entrée : lire · Échap : tout arrêter
+      </p>
     </div>
   </main>
+
+  <input id="fileInput" type="file" accept="audio/*" hidden>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
   <script src="script.js"></script>
 </body>
