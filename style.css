@@ -153,6 +153,62 @@ body::before {
   text-shadow: 0 0 8px rgba(182, 255, 60, 0.5);
 }
 
+/* ---------- Banques de sons ---------- */
+
+.banks {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.4rem;
+  margin-top: 1rem;
+}
+
+.bank {
+  position: relative;
+  padding: 0.55rem 0.3rem;
+  overflow: hidden;
+  border: 1px solid #2c2c3a;
+  border-radius: 12px;
+  background: #14141d;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 0.2s, border-color 0.2s, background 0.2s;
+}
+
+.bank:hover {
+  color: var(--text);
+  border-color: #3a3a4c;
+}
+
+.bank:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.bank.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, #14141d);
+  color: var(--text);
+}
+
+/* Voyant : une boucle tourne dans cette banque */
+.bank.live::after {
+  content: "";
+  position: absolute;
+  top: 6px;
+  right: 7px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+}
+
 /* ---------- Légende, mode et édition ---------- */
 
 .bar {
@@ -161,7 +217,7 @@ body::before {
   align-items: center;
   justify-content: space-between;
   gap: 0.6rem 1rem;
-  margin: 1rem 0 0.7rem;
+  margin: 0.9rem 0 0.7rem;
 }
 
 .bar-actions {
@@ -260,6 +316,18 @@ body::before {
   gap: 0.7rem;
 }
 
+/* Petite transition quand on change de banque */
+.grid.swap {
+  animation: swap 0.28s ease-out;
+}
+
+@keyframes swap {
+  from {
+    opacity: 0.35;
+    transform: translateY(6px);
+  }
+}
+
 .pad {
   --c: #ffffff;
   position: relative;
@@ -314,7 +382,7 @@ body::before {
   max-width: 100%;
   padding: 0 0.2rem;
   overflow: hidden;
-  font-size: clamp(0.68rem, 2.6vw, 0.84rem);
+  font-size: clamp(0.66rem, 2.5vw, 0.82rem);
   font-weight: 700;
   letter-spacing: 0.02em;
   line-height: 1.15;
@@ -837,10 +905,12 @@ input[type="range"]:disabled {
   .pad.hit,
   .pad.hit::after,
   .pad.on,
+  .grid.swap,
   .steps span,
   .btn,
   .btn.rec,
   .chip,
+  .bank,
   .stop,
   .toast {
     animation: none;
