@@ -153,7 +153,7 @@ body::before {
   text-shadow: 0 0 8px rgba(182, 255, 60, 0.5);
 }
 
-/* ---------- Légende et mode édition ---------- */
+/* ---------- Légende, mode et édition ---------- */
 
 .bar {
   display: flex;
@@ -162,6 +162,12 @@ body::before {
   justify-content: space-between;
   gap: 0.6rem 1rem;
   margin: 1rem 0 0.7rem;
+}
+
+.bar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
 }
 
 .legend {
