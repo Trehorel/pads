@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#0a0a0f">
   <title>PADS · Sampler en ligne</title>
-  <meta name="description" content="Un sampler dans le navigateur : 16 pads qui tournent en boucle, tes propres sons, du filtre et de l'écho. Joue au clavier ou au doigt, enregistre et télécharge ta performance.">
+  <meta name="description" content="Un sampler dans le navigateur : 64 pads en 4 banques, des boucles, tes propres sons, du filtre et de l'écho. Joue au clavier ou au doigt, enregistre et télécharge ta performance.">
   <meta property="og:title" content="PADS · Sampler en ligne">
-  <meta property="og:description" content="16 pads en boucle, tes propres sons et des effets. Joue, enregistre, télécharge.">
+  <meta property="og:description" content="64 sons en 4 banques, des boucles et des effets. Joue, enregistre, télécharge.">
   <meta property="og:type" content="website">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🥁</text></svg>">
   <link rel="stylesheet" href="style.css">
@@ -19,7 +19,7 @@
       <header class="top">
         <div class="brand">
           <h1 class="logo">PADS</h1>
-          <p class="sub">Sampler en ligne · 16 pads en boucle</p>
+          <p class="sub">Sampler en ligne · 4 banques · 64 sons</p>
         </div>
         <span id="audioState" class="pill">Audio en veille</span>
       </header>
@@ -32,13 +32,10 @@
         </div>
       </div>
 
+      <nav id="banks" class="banks" aria-label="Banques de sons"></nav>
+
       <div class="bar">
-        <ul class="legend" aria-hidden="true">
-          <li style="--c: #ff5c5c">Batterie</li>
-          <li style="--c: #ffb23c">Percussions</li>
-          <li style="--c: #3cd6ff">Synthés</li>
-          <li style="--c: #b57cff">Boucles complètes</li>
-        </ul>
+        <ul id="legend" class="legend" aria-hidden="true"></ul>
 
         <div class="bar-actions">
           <button id="modeBtn" class="chip active" type="button" aria-pressed="true">↻ Tout en boucle</button>
@@ -126,7 +123,7 @@
 
       <p class="hint">
         Clavier : A Z E R · Q S D F · W X C V · T Y U I<br>
-        Espace : enregistrer · Entrée : lire · Échap : tout arrêter
+        1 2 3 4 : banque · Espace : enregistrer · Entrée : lire · Échap : tout arrêter
       </p>
     </div>
   </main>
