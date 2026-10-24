@@ -1024,3 +1024,16 @@ input[type="range"]:disabled {
     transition: none;
   }
 }
+
+/* ---------- Cinq banques ---------- */
+
+.banks {
+  grid-template-columns: repeat(5, 1fr);
+}
+
+@media (max-width: 420px) {
+  .bank {
+    padding: 0.55rem 0.15rem;
+    font-size: 0.7rem;
+  }
+}
