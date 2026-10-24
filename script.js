@@ -153,6 +153,8 @@
 
   let mediaRec = null;
   let audioUrl = null;
+  let audioExt = EXT;
+  let userRecorded = false; // vrai dès qu'on a lancé un enregistrement pendant cette visite
 
   /* ---------- Éléments de la page ---------- */
 
@@ -176,6 +178,7 @@
   const editBtn = document.getElementById('editBtn');
   const editHint = document.getElementById('editHint');
   const resetSamples = document.getElementById('resetSamples');
+  const resetAll = document.getElementById('resetAll');
   const fileInput = document.getElementById('fileInput');
   const toastEl = document.getElementById('toast');
 
@@ -212,6 +215,185 @@
     toastEl.classList.add('show');
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2600);
+  }
+
+  /* ---------- Sauvegarde dans le navigateur ---------- */
+
+  // Petites données (réglages, performance) : localStorage
+  const LS_SETTINGS = 'pads.settings.v1';
+  const LS_REC = 'pads.rec.v1';
+
+  function lsGet(key) {
+    try {
+      return JSON.parse(localStorage.getItem(key));
+    } catch (err) {
+      return null;
+    }
+  }
+
+  function lsSet(key, value) {
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+      return true;
+    } catch (err) {
+      return false;
+    }
+  }
+
+  function lsDel(key) {
+    try {
+      localStorage.removeItem(key);
+    } catch (err) {
+      // stockage indisponible : rien à effacer
+    }
+  }
+
+  // Fichiers audio (sons perso, dernier enregistrement) : IndexedDB
+  const DB_NAME = 'pads-db';
+  const STORE = 'blobs';
+  let dbPromise = null;
+
+  function openDb() {
+    if (!dbPromise) {
+      dbPromise = new Promise((resolve, reject) => {
+        if (!window.indexedDB) {
+          reject(new Error('IndexedDB indisponible'));
+          return;
+        }
+
+        const req = indexedDB.open(DB_NAME, 1);
+        req.onupgradeneeded = () => req.result.createObjectStore(STORE);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+    }
+    return dbPromise;
+  }
+
+  function dbRun(mode, fn) {
+    return openDb().then((db) => new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE, mode);
+      const req = fn(tx.objectStore(STORE));
+      tx.oncomplete = () => resolve(req ? req.result : undefined);
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    }));
+  }
+
+  const dbGet = (key) => dbRun('readonly', (store) => store.get(key));
+  const dbSet = (key, value) => dbRun('readwrite', (store) => store.put(value, key));
+  const dbDel = (key) => dbRun('readwrite', (store) => store.delete(key));
+  const dbClear = () => dbRun('readwrite', (store) => store.clear());
+
+  // Demande au navigateur de ne pas effacer nos données quand il manque de place
+  function requestPersist() {
+    if (navigator.storage && navigator.storage.persist) {
+      navigator.storage.persist().catch(() => {});
+    }
+  }
+
+  // Décode un fichier audio sans avoir besoin de lancer le son
+  function decodeAudio(data) {
+    const Offline = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    const decoder = new Offline(1, 1, 44100);
+    return new Promise((resolve, reject) => decoder.decodeAudioData(data, resolve, reject));
+  }
+
+  // Réglages : sauvegardés un court instant après le dernier changement
+  let saveTimer = null;
+
+  function saveSettings() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      // Pendant une lecture, on garde les réglages d'avant la lecture
+      const live = (name) => (play.saved ? play.saved[name] : FX[name].input.value);
+
+      lsSet(LS_SETTINGS, {
+        bank,
+        oneShot,
+        volume: live('volume'),
+        filter: live('filter'),
+        echo: live('echo'),
+        tempo: tempo.value,
+        loopPlay: loopPlay.checked
+      });
+    }, 300);
+  }
+
+  function saveRecording() {
+    const ok = lsSet(LS_REC, { events: rec.events, duration: rec.duration, bpm: rec.bpm });
+    if (!ok) toast('Performance non sauvegardée (espace insuffisant).');
+  }
+
+  function restoreSettings() {
+    const s = lsGet(LS_SETTINGS);
+    if (!s || typeof s !== 'object') return;
+
+    const setRange = (input, value) => {
+      if (value !== undefined && value !== null && !Number.isNaN(Number(value))) input.value = value;
+    };
+
+    setRange(volume, s.volume);
+    setRange(filterSlider, s.filter);
+    setRange(echo, s.echo);
+    setRange(tempo, s.tempo);
+    loopPlay.checked = Boolean(s.loopPlay);
+    setOneShot(Boolean(s.oneShot), true);
+
+    if (Number.isInteger(s.bank) && s.bank >= 0 && s.bank < BANKS.length) bank = s.bank;
+  }
+
+  function restoreRecording() {
+    const saved = lsGet(LS_REC);
+    if (!saved || !Array.isArray(saved.events)) return;
+
+    // On ne garde que les actions qu'on sait encore rejouer
+    rec.events = saved.events.filter((ev) => ev && typeof ev.t === 'number' && (
+      (ev.kind === 'fx' && FX[ev.name]) ||
+      ((ev.kind === 'hit' || ev.kind === 'loop') && PADS[ev.i])
+    ));
+    rec.duration = Number(saved.duration) || 0;
+    rec.bpm = Number(saved.bpm) || 110;
+
+    renderTimeline();
+    setTime(rec.duration);
+    idleStatus();
+  }
+
+  // Sons perso et fichier de la dernière performance (chargés en arrière-plan)
+  async function restoreFromStorage() {
+    let count = 0;
+
+    try {
+      await openDb();
+
+      for (let i = 0; i < PADS.length; i++) {
+        if (PADS[i].type !== 'hit' || samples[i]) continue;
+
+        const saved = await dbGet('sample:' + PADS[i].loop);
+        if (!saved || !saved.data) continue;
+
+        try {
+          samples[i] = { buffer: await decodeAudio(saved.data.slice(0)), label: saved.label };
+          count++;
+        } catch (err) {
+          // fichier abîmé : on l'ignore
+        }
+      }
+
+      if (count) refreshAll();
+
+      const savedAudio = await dbGet('rec-audio');
+      if (savedAudio && savedAudio.data && !userRecorded && !audioUrl) {
+        audioUrl = URL.createObjectURL(new Blob([savedAudio.data], { type: savedAudio.type }));
+        audioExt = savedAudio.ext || 'webm';
+        updateButtons();
+      }
+    } catch (err) {
+      // stockage indisponible (navigation privée, par exemple) : le site marche sans sauvegarde
+    }
+
+    if (count || hasActions()) toast('Ta dernière session a été restaurée.');
   }
 
   /* ---------- Initialisation de l'audio ---------- */
@@ -889,6 +1071,12 @@
     gridEl.classList.add('swap');
   }
 
+  // Changement de banque demandé par la personne (et mémorisé)
+  function selectBank(b) {
+    showBank(b);
+    saveSettings();
+  }
+
   // Allume le voyant d'une banque quand une de ses boucles tourne
   function updateBankTabs() {
     bankEls.forEach((el, k) => {
@@ -990,6 +1178,18 @@
     stopAll();
   }
 
+  // Mode « Tout en boucle » ou « Coup unique »
+  function setOneShot(value, silent) {
+    oneShot = value;
+    modeBtn.classList.toggle('active', !oneShot);
+    modeBtn.setAttribute('aria-pressed', String(!oneShot));
+    modeBtn.textContent = oneShot ? '● Coup unique' : '↻ Tout en boucle';
+
+    if (!silent) {
+      toast(oneShot ? 'Chaque appui joue un seul coup.' : 'Tous les pads tournent en boucle.');
+    }
+  }
+
   /* ---------- Sons personnels : chargement ---------- */
 
   async function loadSample(i, file) {
@@ -1011,7 +1211,9 @@
     initAudio();
 
     try {
-      const buffer = await ctx.decodeAudioData(await file.arrayBuffer());
+      const data = await file.arrayBuffer();
+      const copy = data.slice(0); // le décodage vide le tableau d'origine : on garde une copie
+      const buffer = await decodeAudio(data);
       const label = file.name.replace(/\.[^.]+$/, '').slice(0, 14);
 
       samples[i] = { buffer, label };
@@ -1019,6 +1221,11 @@
       playPad(i, ctx.currentTime + 0.01);
       flash(elOf(i));
       toast('Son chargé sur « ' + PADS[i].name + ' ».');
+
+      // Sauvegarde pour la prochaine visite
+      dbSet('sample:' + PADS[i].loop, { label, data: copy })
+        .then(requestPersist)
+        .catch(() => toast('Son chargé, mais impossible de le sauvegarder (espace insuffisant ou navigation privée).'));
     } catch (err) {
       toast('Impossible de lire ce fichier audio.');
     }
@@ -1140,6 +1347,7 @@
     initAudio();
     if (play.on) stopPlayback();
 
+    userRecorded = true;
     rec.events = [];
     rec.bpm = state.bpm;
     rec.duration = 0;
@@ -1177,8 +1385,16 @@
 
       r.onstop = () => {
         if (mediaRec !== r || !chunks.length) return;
-        audioUrl = URL.createObjectURL(new Blob(chunks, { type: MIME }));
+
+        const blob = new Blob(chunks, { type: MIME });
+        audioUrl = URL.createObjectURL(blob);
+        audioExt = EXT;
         updateButtons();
+
+        // Sauvegarde du fichier pour la prochaine visite
+        blob.arrayBuffer()
+          .then((data) => dbSet('rec-audio', { type: MIME, ext: EXT, data }))
+          .catch(() => {});
       };
 
       r.start();
@@ -1201,6 +1417,10 @@
         if (r.state !== 'inactive') r.stop();
       }, 500);
     }
+
+    // La performance est sauvegardée tout de suite ; le fichier audio suivra
+    saveRecording();
+    dbDel('rec-audio').catch(() => {});
 
     setTime(rec.duration);
     renderTimeline();
@@ -1312,6 +1532,64 @@
     }
   }
 
+  /* ---------- Remise à zéro ---------- */
+
+  function resetSounds() {
+    PADS.forEach((pad, i) => {
+      if (samples[i]) dbDel('sample:' + pad.loop).catch(() => {});
+    });
+    samples.fill(null);
+    refreshAll();
+  }
+
+  async function resetEverything() {
+    if (!window.confirm('Effacer tes sons, tes réglages et ta dernière performance sauvegardés ?')) return;
+
+    if (play.on) stopPlayback();
+    if (rec.on) stopRecording();
+    mediaRec = null; // le fichier audio de l'enregistrement en cours ne sera pas sauvegardé
+
+    stopAll();
+    samples.fill(null);
+
+    rec.events = [];
+    rec.duration = 0;
+    rec.bpm = 110;
+
+    if (audioUrl) {
+      URL.revokeObjectURL(audioUrl);
+      audioUrl = null;
+    }
+
+    lsDel(LS_SETTINGS);
+    lsDel(LS_REC);
+
+    try {
+      await dbClear();
+    } catch (err) {
+      // stockage indisponible : rien à effacer
+    }
+
+    volume.value = 0.8;
+    filterSlider.value = 1;
+    echo.value = 0;
+    tempo.value = 110;
+    loopPlay.checked = false;
+    applyVolume();
+    applyFilter();
+    applyEcho();
+    applyTempo();
+    setOneShot(false, true);
+
+    clearTimeline();
+    setTime(0);
+    idleStatus();
+    showBank(0);
+    updateButtons();
+
+    toast('Tout est remis à zéro.');
+  }
+
   /* ---------- Construction de l'interface ---------- */
 
   // Onglets des banques
@@ -1321,7 +1599,7 @@
     btn.className = 'bank';
     btn.textContent = b.name;
     btn.setAttribute('aria-pressed', 'false');
-    btn.addEventListener('click', () => showBank(k));
+    btn.addEventListener('click', () => selectBank(k));
     banksEl.appendChild(btn);
     bankEls.push(btn);
   });
@@ -1409,7 +1687,7 @@
     // Touches 1 à 4 : changer de banque (fonctionne aussi sur un clavier AZERTY)
     const digit = /^(?:Digit|Numpad)([1-4])$/.exec(e.code);
     if (digit) {
-      showBank(Number(digit[1]) - 1);
+      selectBank(Number(digit[1]) - 1);
       return;
     }
 
@@ -1435,11 +1713,17 @@
     fx.input.addEventListener('input', () => {
       fx.apply();
       recordFx(name, false);
+      saveSettings();
     });
     fx.input.addEventListener('change', () => recordFx(name, true));
   });
 
-  tempo.addEventListener('input', applyTempo);
+  tempo.addEventListener('input', () => {
+    applyTempo();
+    saveSettings();
+  });
+
+  loopPlay.addEventListener('change', saveSettings);
 
   recBtn.addEventListener('click', toggleRecording);
   playBtn.addEventListener('click', togglePlayback);
@@ -1448,18 +1732,15 @@
     if (!audioUrl) return;
     const a = document.createElement('a');
     a.href = audioUrl;
-    a.download = 'performance-pads.' + EXT;
+    a.download = 'performance-pads.' + audioExt;
     a.click();
   });
 
   stopBtn.addEventListener('click', stopAction);
 
   modeBtn.addEventListener('click', () => {
-    oneShot = !oneShot;
-    modeBtn.classList.toggle('active', !oneShot);
-    modeBtn.setAttribute('aria-pressed', String(!oneShot));
-    modeBtn.textContent = oneShot ? '● Coup unique' : '↻ Tout en boucle';
-    toast(oneShot ? 'Chaque appui joue un seul coup.' : 'Tous les pads tournent en boucle.');
+    setOneShot(!oneShot, false);
+    saveSettings();
   });
 
   editBtn.addEventListener('click', () => {
@@ -1476,10 +1757,11 @@
   });
 
   resetSamples.addEventListener('click', () => {
-    samples.fill(null);
-    refreshAll();
+    resetSounds();
     toast('Sons d\'origine rétablis.');
   });
+
+  resetAll.addEventListener('click', resetEverything);
 
   /* ---------- Visualiseur, minuteur et lueur de fond ---------- */
 
@@ -1581,11 +1863,14 @@
 
   /* ---------- État initial ---------- */
 
+  restoreSettings();
   applyVolume();
   applyFilter();
   applyEcho();
   applyTempo();
-  showBank(0);
+  showBank(bank);
+  restoreRecording();
   updateLoopRead();
   updateButtons();
+  restoreFromStorage(); // sons perso et fichier audio : chargés en arrière-plan
 })();
