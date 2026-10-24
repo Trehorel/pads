@@ -1,32 +1,89 @@
 (() => {
   'use strict';
 
-  /* ---------- Définition des pads ---------- */
+  /* ---------- Banques et pads ---------- */
 
-  // type 'hit'  : pad avec un son à lui, qui tourne en boucle sur son propre rythme
-  //               (ou se joue en coup unique si le mode « Coup unique » est actif)
-  // type 'loop' : boucle complète, sans coup unique
-  const PADS = [
-    { name: 'Kick',     key: 'a', type: 'hit',  sound: 'kick',    loop: 'kick',     color: '#ff5c5c' },
-    { name: 'Snare',    key: 'z', type: 'hit',  sound: 'snare',   loop: 'snare',    color: '#ff5c5c' },
-    { name: 'Clap',     key: 'e', type: 'hit',  sound: 'clap',    loop: 'clap',     color: '#ff5c5c' },
-    { name: 'Hat',      key: 'r', type: 'hit',  sound: 'hat',     loop: 'hat',      color: '#ff5c5c' },
+  // Touches du clavier, dans l'ordre des 16 pads d'une banque (4 lignes de 4)
+  const KEYS = ['a', 'z', 'e', 'r', 'q', 's', 'd', 'f', 'w', 'x', 'c', 'v', 't', 'y', 'u', 'i'];
 
-    { name: 'Open hat', key: 'q', type: 'hit',  sound: 'openhat', loop: 'openhat',  color: '#ffb23c' },
-    { name: 'Tom',      key: 's', type: 'hit',  sound: 'tom',     loop: 'tom',      color: '#ffb23c' },
-    { name: 'Rim',      key: 'd', type: 'hit',  sound: 'rim',     loop: 'rim',      color: '#ffb23c' },
-    { name: 'Cowbell',  key: 'f', type: 'hit',  sound: 'cowbell', loop: 'cowbell',  color: '#ffb23c' },
-
-    { name: 'Basse',    key: 'w', type: 'hit',  sound: 'bass',    loop: 'bass',     color: '#3cd6ff' },
-    { name: 'Accord',   key: 'x', type: 'hit',  sound: 'stab',    loop: 'stab',     color: '#3cd6ff' },
-    { name: 'Pluck',    key: 'c', type: 'hit',  sound: 'pluck',   loop: 'pluck',    color: '#3cd6ff' },
-    { name: 'Laser',    key: 'v', type: 'hit',  sound: 'laser',   loop: 'laser',    color: '#3cd6ff' },
-
-    { name: 'Beat',     key: 't', type: 'loop', loop: 'beat',     color: '#b57cff' },
-    { name: 'Hats',     key: 'y', type: 'loop', loop: 'hats',     color: '#b57cff' },
-    { name: 'Bassline', key: 'u', type: 'loop', loop: 'bassline', color: '#b57cff' },
-    { name: 'Arp',      key: 'i', type: 'loop', loop: 'arp',      color: '#b57cff' }
+  // Chaque banque a 12 pads avec un son à eux ([nom, son]) et 4 boucles complètes ([nom, boucle]).
+  // Le nom du son sert aussi d'identifiant à la boucle du pad : il doit être unique.
+  const BANKS = [
+    {
+      name: 'Classique',
+      rows: ['Batterie', 'Percussions', 'Synthés', 'Boucles complètes'],
+      colors: ['#ff5c5c', '#ffb23c', '#3cd6ff', '#b57cff'],
+      pads: [
+        ['Kick', 'kick'], ['Snare', 'snare'], ['Clap', 'clap'], ['Hat', 'hat'],
+        ['Open hat', 'openhat'], ['Tom', 'tom'], ['Rim', 'rim'], ['Cowbell', 'cowbell'],
+        ['Basse', 'bass'], ['Accord', 'stab'], ['Pluck', 'pluck'], ['Laser', 'laser']
+      ],
+      loops: [['Beat', 'beat'], ['Hats', 'hats'], ['Bassline', 'bassline'], ['Arp', 'arp']]
+    },
+    {
+      name: 'Électro',
+      rows: ['Batterie', 'Percussions', 'Synthés', 'Boucles complètes'],
+      colors: ['#ff4fd8', '#4f8bff', '#3cff9a', '#b6ff3c'],
+      pads: [
+        ['Kick 808', 'kick808'], ['Snare', 'snare2'], ['Clap', 'clap2'], ['Hat 909', 'hat909'],
+        ['Rimshot', 'rimshot'], ['Conga', 'conga'], ['Shaker', 'shaker'], ['Tambo', 'tambo'],
+        ['Sub', 'sub'], ['Supersaw', 'supersaw'], ['Acid', 'acid'], ['Zap', 'zap']
+      ],
+      loops: [['Four floor', 'fourfloor'], ['Acid line', 'acidline'], ['Disco', 'disco'], ['Rave', 'rave']]
+    },
+    {
+      name: 'Lo-fi',
+      rows: ['Batterie', 'Percussions', 'Instruments', 'Boucles complètes'],
+      colors: ['#ff9f6b', '#e8c07a', '#8be28b', '#c79bff'],
+      pads: [
+        ['Boom', 'boombap'], ['Snap', 'snap'], ['Rim', 'rimlofi'], ['Hat lofi', 'hatlofi'],
+        ['Vinyle', 'vinylpop'], ['Bongo', 'bongo'], ['Wood', 'wood'], ['Cloche', 'bell'],
+        ['Rhodes', 'rhodes'], ['Fat bass', 'fatbass'], ['Scratch', 'scratch'], ['Chop', 'chop']
+      ],
+      loops: [['Boom bap', 'boombapbeat'], ['Accords', 'lofichords'], ['Poussière', 'dusty'], ['Mélodie', 'melody']]
+    },
+    {
+      name: 'FX',
+      rows: ['Effets', 'Bruitages', 'Instruments', 'Boucles complètes'],
+      colors: ['#6ee7ff', '#ff7a7a', '#ffd84f', '#b57cff'],
+      pads: [
+        ['Riser', 'riser'], ['Impact', 'impact'], ['Sirène', 'siren'], ['Glitch', 'glitch'],
+        ['Bulle', 'bubble'], ['Coin', 'coin'], ['Drop', 'drop'], ['Whoosh', 'whoosh'],
+        ['Marimba', 'marimba'], ['Kalimba', 'kalimba'], ['Gong', 'gong'], ['Chœur', 'choir']
+      ],
+      loops: [['Ambiance', 'ambient'], ['Tension', 'tension'], ['Arcade', 'arcade'], ['Monde', 'world']]
+    }
   ];
+
+  // Liste à plat des 64 pads : l'indice d'un pad est banque × 16 + position
+  const PADS = [];
+
+  BANKS.forEach((b, bankIndex) => {
+    b.pads.forEach(([name, sound], p) => {
+      PADS.push({
+        name,
+        key: KEYS[p],
+        type: 'hit',
+        sound,
+        loop: sound,
+        color: b.colors[Math.floor(p / 4)],
+        bank: bankIndex
+      });
+    });
+
+    b.loops.forEach(([name, loop], k) => {
+      PADS.push({
+        name,
+        key: KEYS[12 + k],
+        type: 'loop',
+        loop,
+        color: b.colors[3],
+        bank: bankIndex
+      });
+    });
+  });
+
+  let bank = 0; // banque affichée
 
   const REDUCED = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -101,6 +158,8 @@
 
   const gridEl = document.getElementById('grid');
   const stepsEl = document.getElementById('steps');
+  const banksEl = document.getElementById('banks');
+  const legendEl = document.getElementById('legend');
   const canvas = document.getElementById('viz');
   const gfx = canvas.getContext('2d');
   const volume = document.getElementById('volume');
@@ -133,6 +192,7 @@
 
   const padEls = [];
   const stepEls = [];
+  const bankEls = [];
 
   if (!MIME) dlBtn.hidden = true;
 
@@ -198,7 +258,7 @@
       comp.connect(recDest);
     }
 
-    // Bruit blanc réutilisé pour caisse claire, charleston, clap
+    // Bruit blanc réutilisé pour les caisses claires, charlestons, claps, effets
     noiseBuf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
     const data = noiseBuf.getChannelData(0);
     for (let i = 0; i < data.length; i++) {
@@ -216,6 +276,7 @@
 
   /* ---------- Briques de synthèse ---------- */
 
+  // Oscillateur avec enveloppe qui décroît (et glissando optionnel de f0 vers f1)
   function tone(t, out, { type = 'sine', f0, f1, dur = 0.3, vol = 1 }) {
     const o = ctx.createOscillator();
     const g = ctx.createGain();
@@ -229,6 +290,7 @@
     o.stop(t + dur + 0.02);
   }
 
+  // Petit souffle de bruit filtré
   function burst(t, out, { type = 'highpass', freq = 7000, q = 1, dur = 0.05, vol = 1 }) {
     const s = ctx.createBufferSource();
     const f = ctx.createBiquadFilter();
@@ -244,9 +306,46 @@
     s.stop(t + dur + 0.02);
   }
 
+  // Bruit dont le filtre glisse de f0 vers f1 (montée si up, sinon descente)
+  function sweepNoise(t, out, { f0, f1, dur = 0.5, q = 2, vol = 0.5, up = false }) {
+    const s = ctx.createBufferSource();
+    const f = ctx.createBiquadFilter();
+    const g = ctx.createGain();
+    s.buffer = noiseBuf;
+    s.loop = true;
+    f.type = 'bandpass';
+    f.Q.value = q;
+    f.frequency.setValueAtTime(f0, t);
+    f.frequency.exponentialRampToValueAtTime(f1, t + dur);
+
+    if (up) {
+      g.gain.setValueAtTime(0.01, t);
+      g.gain.exponentialRampToValueAtTime(vol, t + dur);
+      g.gain.exponentialRampToValueAtTime(0.001, t + dur + 0.05);
+    } else {
+      g.gain.setValueAtTime(vol, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    }
+
+    s.connect(f).connect(g).connect(out);
+    s.start(t);
+    s.stop(t + dur + 0.1);
+  }
+
+  // Plusieurs notes jouées ensemble à travers un filtre passe-bas
+  function chord(t, out, freqs, { type = 'sawtooth', cutoff = 2000, dur = 0.3, vol = 0.12 }) {
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = cutoff;
+    lp.connect(out);
+    freqs.forEach((fr) => tone(t, lp, { type, f0: fr, dur, vol }));
+  }
+
   /* ---------- Sons ---------- */
 
   const SOUNDS = {
+    /* ----- Classique ----- */
+
     kick(t, out, f, v = 1) {
       tone(t, out, { type: 'sine', f0: 150, f1: 42, dur: 0.45, vol: v });
     },
@@ -295,13 +394,7 @@
     },
 
     stab(t, out, f, v = 1) {
-      const lp = ctx.createBiquadFilter();
-      lp.type = 'lowpass';
-      lp.frequency.value = 1800;
-      lp.connect(out);
-      [220, 277.2, 329.6].forEach((note) => {
-        tone(t, lp, { type: 'sawtooth', f0: note, dur: 0.25, vol: 0.12 * v });
-      });
+      chord(t, out, [220, 277.2, 329.6], { cutoff: 1800, dur: 0.25, vol: 0.12 * v });
     },
 
     pluck(t, out, f = 659.3, v = 1) {
@@ -310,6 +403,233 @@
 
     laser(t, out, f, v = 1) {
       tone(t, out, { type: 'sawtooth', f0: 1800, f1: 80, dur: 0.35, vol: 0.25 * v });
+    },
+
+    /* ----- Électro ----- */
+
+    kick808(t, out, f, v = 1) {
+      tone(t, out, { type: 'sine', f0: 120, f1: 38, dur: 0.9, vol: v });
+    },
+
+    snare2(t, out, f, v = 1) {
+      tone(t, out, { type: 'triangle', f0: 330, f1: 180, dur: 0.12, vol: 0.5 * v });
+      burst(t, out, { type: 'highpass', freq: 2500, dur: 0.25, vol: 0.9 * v });
+    },
+
+    clap2(t, out, f, v = 1) {
+      for (let i = 0; i < 4; i++) {
+        burst(t + i * 0.01, out, { type: 'bandpass', freq: 1200, q: 0.8, dur: 0.02, vol: 0.6 * v });
+      }
+      burst(t + 0.04, out, { type: 'bandpass', freq: 1200, q: 0.8, dur: 0.3, vol: 0.7 * v });
+    },
+
+    hat909(t, out, f, v = 1) {
+      const hp = ctx.createBiquadFilter();
+      hp.type = 'highpass';
+      hp.frequency.value = 7000;
+      hp.connect(out);
+      [2093, 3136, 3520, 4186, 5920].forEach((fr) => {
+        tone(t, hp, { type: 'square', f0: fr, dur: 0.06, vol: 0.05 * v });
+      });
+    },
+
+    rimshot(t, out, f, v = 1) {
+      tone(t, out, { type: 'square', f0: 1700, dur: 0.02, vol: 0.3 * v });
+      tone(t, out, { type: 'square', f0: 480, dur: 0.03, vol: 0.3 * v });
+      burst(t, out, { type: 'bandpass', freq: 2500, dur: 0.03, vol: 0.4 * v });
+    },
+
+    conga(t, out, f, v = 1) {
+      tone(t, out, { type: 'sine', f0: 330, f1: 240, dur: 0.22, vol: 0.8 * v });
+      burst(t, out, { type: 'bandpass', freq: 1800, dur: 0.01, vol: 0.2 * v });
+    },
+
+    shaker(t, out, f, v = 1) {
+      burst(t, out, { type: 'bandpass', freq: 6500, q: 1.5, dur: 0.09, vol: 0.45 * v });
+    },
+
+    tambo(t, out, f, v = 1) {
+      burst(t, out, { type: 'highpass', freq: 4000, dur: 0.18, vol: 0.35 * v });
+      burst(t, out, { type: 'bandpass', freq: 9000, dur: 0.1, vol: 0.25 * v });
+    },
+
+    sub(t, out, f = 41.2, v = 1) {
+      tone(t, out, { type: 'sine', f0: f, dur: 0.8, vol: 0.9 * v });
+    },
+
+    supersaw(t, out, f = 220, v = 1) {
+      const notes = [f, f * 1.5, f * 2].flatMap((fr) => [fr * 0.994, fr, fr * 1.006]);
+      chord(t, out, notes, { cutoff: 3500, dur: 0.5, vol: 0.05 * v });
+    },
+
+    acid(t, out, f = 110, v = 1) {
+      const o = ctx.createOscillator();
+      const lp = ctx.createBiquadFilter();
+      const g = ctx.createGain();
+      o.type = 'sawtooth';
+      o.frequency.value = f;
+      lp.type = 'lowpass';
+      lp.Q.value = 14;
+      lp.frequency.setValueAtTime(1800, t);
+      lp.frequency.exponentialRampToValueAtTime(200, t + 0.25);
+      g.gain.setValueAtTime(0.4 * v, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+      o.connect(lp).connect(g).connect(out);
+      o.start(t);
+      o.stop(t + 0.32);
+    },
+
+    zap(t, out, f, v = 1) {
+      tone(t, out, { type: 'square', f0: 1200, f1: 100, dur: 0.15, vol: 0.2 * v });
+      tone(t, out, { type: 'sawtooth', f0: 2400, f1: 200, dur: 0.1, vol: 0.15 * v });
+    },
+
+    /* ----- Lo-fi ----- */
+
+    boombap(t, out, f, v = 1) {
+      tone(t, out, { type: 'sine', f0: 110, f1: 48, dur: 0.35, vol: v });
+      burst(t, out, { type: 'lowpass', freq: 800, dur: 0.02, vol: 0.3 * v });
+    },
+
+    snap(t, out, f, v = 1) {
+      burst(t, out, { type: 'bandpass', freq: 2200, q: 2, dur: 0.07, vol: 0.7 * v });
+      tone(t, out, { type: 'triangle', f0: 1300, dur: 0.03, vol: 0.15 * v });
+    },
+
+    rimlofi(t, out, f, v = 1) {
+      tone(t, out, { type: 'triangle', f0: 600, dur: 0.05, vol: 0.35 * v });
+      burst(t, out, { type: 'bandpass', freq: 1800, dur: 0.03, vol: 0.3 * v });
+    },
+
+    hatlofi(t, out, f, v = 1) {
+      burst(t, out, { type: 'highpass', freq: 5500, dur: 0.045, vol: 0.35 * v });
+    },
+
+    vinylpop(t, out, f, v = 1) {
+      burst(t, out, { type: 'lowpass', freq: 1200, dur: 0.03, vol: 0.5 * v });
+      burst(t, out, { type: 'highpass', freq: 3000, dur: 0.02, vol: 0.2 * v });
+    },
+
+    bongo(t, out, f, v = 1) {
+      tone(t, out, { type: 'sine', f0: 420, f1: 330, dur: 0.14, vol: 0.7 * v });
+    },
+
+    wood(t, out, f, v = 1) {
+      tone(t, out, { type: 'triangle', f0: 880, dur: 0.08, vol: 0.4 * v });
+      tone(t, out, { type: 'sine', f0: 1320, dur: 0.04, vol: 0.15 * v });
+    },
+
+    bell(t, out, f = 880, v = 1) {
+      tone(t, out, { type: 'sine', f0: f, dur: 1.0, vol: 0.25 * v });
+      tone(t, out, { type: 'sine', f0: f * 1.5, dur: 0.8, vol: 0.15 * v });
+      tone(t, out, { type: 'sine', f0: f * 2.52, dur: 0.5, vol: 0.08 * v });
+    },
+
+    rhodes(t, out, f, v = 1) {
+      chord(t, out, [261.6, 329.6, 392, 493.9], { type: 'sine', cutoff: 2500, dur: 0.9, vol: 0.11 * v });
+      chord(t, out, [523.2, 659.2], { type: 'sine', cutoff: 2500, dur: 0.5, vol: 0.03 * v });
+    },
+
+    fatbass(t, out, f = 55, v = 1) {
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 260;
+      lp.connect(out);
+      tone(t, lp, { type: 'sawtooth', f0: f, dur: 0.5, vol: 0.5 * v });
+      tone(t, lp, { type: 'sawtooth', f0: f * 1.005, dur: 0.5, vol: 0.4 * v });
+    },
+
+    scratch(t, out, f, v = 1) {
+      sweepNoise(t, out, { f0: 600, f1: 2400, dur: 0.12, q: 6, vol: 0.5 * v });
+      sweepNoise(t + 0.12, out, { f0: 2400, f1: 500, dur: 0.14, q: 6, vol: 0.5 * v });
+    },
+
+    chop(t, out, f = 196, v = 1) {
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = 900;
+      bp.Q.value = 3;
+      bp.connect(out);
+      tone(t, bp, { type: 'sawtooth', f0: f, dur: 0.22, vol: 0.4 * v });
+    },
+
+    /* ----- FX ----- */
+
+    riser(t, out, f, v = 1) {
+      sweepNoise(t, out, { f0: 300, f1: 7000, dur: 1.4, q: 2, vol: 0.5 * v, up: true });
+    },
+
+    impact(t, out, f, v = 1) {
+      tone(t, out, { type: 'sine', f0: 90, f1: 28, dur: 1.2, vol: v });
+      burst(t, out, { type: 'lowpass', freq: 600, dur: 1.2, vol: 0.6 * v });
+    },
+
+    siren(t, out, f, v = 1) {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = 'sine';
+      o.frequency.setValueAtTime(600, t);
+      o.frequency.linearRampToValueAtTime(1000, t + 0.4);
+      o.frequency.linearRampToValueAtTime(600, t + 0.8);
+      g.gain.setValueAtTime(0.2 * v, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.85);
+      o.connect(g).connect(out);
+      o.start(t);
+      o.stop(t + 0.9);
+    },
+
+    glitch(t, out, f, v = 1) {
+      for (let k = 0; k < 6; k++) {
+        tone(t + k * 0.03, out, { type: 'square', f0: 200 + k * 250, dur: 0.03, vol: 0.1 * v });
+      }
+    },
+
+    bubble(t, out, f, v = 1) {
+      tone(t, out, { type: 'sine', f0: 300, f1: 900, dur: 0.12, vol: 0.35 * v });
+    },
+
+    coin(t, out, f, v = 1) {
+      tone(t, out, { type: 'square', f0: 988, dur: 0.08, vol: 0.15 * v });
+      tone(t + 0.08, out, { type: 'square', f0: 1319, dur: 0.35, vol: 0.15 * v });
+    },
+
+    drop(t, out, f, v = 1) {
+      tone(t, out, { type: 'sine', f0: 400, f1: 40, dur: 0.7, vol: 0.8 * v });
+    },
+
+    whoosh(t, out, f, v = 1) {
+      sweepNoise(t, out, { f0: 400, f1: 3000, dur: 0.5, q: 1, vol: 0.5 * v, up: true });
+    },
+
+    marimba(t, out, f = 523.3, v = 1) {
+      tone(t, out, { type: 'sine', f0: f, dur: 0.35, vol: 0.5 * v });
+      tone(t, out, { type: 'sine', f0: f * 4, dur: 0.1, vol: 0.15 * v });
+    },
+
+    kalimba(t, out, f = 784, v = 1) {
+      tone(t, out, { type: 'sine', f0: f, dur: 0.6, vol: 0.4 * v });
+      tone(t, out, { type: 'sine', f0: f * 2.76, dur: 0.15, vol: 0.12 * v });
+    },
+
+    gong(t, out, f, v = 1) {
+      [110, 150.4, 222, 334].forEach((fr) => {
+        tone(t, out, { type: 'sine', f0: fr, dur: 2, vol: 0.13 * v });
+      });
+    },
+
+    choir(t, out, f = 196, v = 1) {
+      const bp = ctx.createBiquadFilter();
+      const g = ctx.createGain();
+      bp.type = 'bandpass';
+      bp.frequency.value = 900;
+      bp.Q.value = 1.2;
+      g.gain.setValueAtTime(0.001, t);
+      g.gain.linearRampToValueAtTime(0.5 * v, t + 0.2);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.9);
+      bp.connect(g).connect(out);
+      [f, f * 1.26, f * 1.5].forEach((fr, k) => {
+        tone(t, bp, { type: 'sawtooth', f0: fr * (1 + (k - 1) * 0.004), dur: 0.9, vol: 0.2 });
+      });
     }
   };
 
@@ -350,16 +670,27 @@
     return (s) => (map.has(s) ? [map.get(s)] : []);
   }
 
+  // Superpose plusieurs rythmes
+  const mix = (...fns) => (s) => fns.flatMap((fn) => fn(s));
+
+  const ALL16 = Array.from({ length: 16 }, (_, s) => s);
+  const EVENS = ALL16.filter((s) => s % 2 === 0);
+  const ODDS = ALL16.filter((s) => s % 2 === 1);
+
   const BASS_LINE = [55, 0, 0, 55, 0, 0, 65.4, 0, 0, 55, 0, 73.4, 0, 0, 65.4, 0];
   const ARP_NOTES = [440, 523.3, 659.3, 784, 659.3, 523.3, 440, 392];
+  const ACID_LINE = [110, 0, 110, 165, 0, 110, 131, 0, 110, 0, 165, 0, 147, 0, 131, 0];
+  const ACID_STEPS = ACID_LINE.map((fr, s) => (fr ? [s, 1, fr] : null)).filter(Boolean);
+  const MARIMBA_STEPS = [[0, 1, 523.3], [2, 0.8, 659.3], [4, 0.8, 784], [8, 1, 659.3], [10, 0.8, 523.3], [12, 0.8, 392]];
+  const KALIMBA_STEPS = [[1, 0.8, 784], [3, 0.7, 988], [5, 0.7, 880], [9, 0.8, 784], [11, 0.7, 659.3], [14, 0.7, 880]];
 
   // Chaque boucle renvoie, pour un pas donné, une liste de [son, fréquence, volume]
   const LOOPS = {
-    // Un rythme par pad
+    /* ----- Classique : un rythme par pad ----- */
     kick:    pat('kick',    [0, 4, 8, 12]),
     snare:   pat('snare',   [4, 12, [7, 0.35], [15, 0.35]]),
     clap:    pat('clap',    [6, 14]),
-    hat:     pat('hat',     [0, 2, 4, 6, 8, 10, 12, 14]),
+    hat:     pat('hat',     EVENS),
     openhat: pat('openhat', [[2, 0.7], [6, 0.7], [10, 0.7], [14, 0.7]]),
     tom:     pat('tom',     [[3, 0.8], [6, 0.8], [11, 0.8]]),
     rim:     pat('rim',     [2, 5, 10, 13]),
@@ -369,7 +700,7 @@
     pluck:   pat('pluck',   [[0, 1, 659.3], [3, 1, 784], [6, 1, 880], [8, 1, 659.3], [11, 1, 784], [14, 1, 988]]),
     laser:   pat('laser',   [[12, 0.8]]),
 
-    // Boucles complètes
+    /* ----- Classique : boucles complètes ----- */
     beat(s) {
       const hits = [];
       if (s % 4 === 0) hits.push(['kick']);
@@ -389,7 +720,70 @@
 
     arp(s) {
       return s % 2 === 0 ? [['pluck', ARP_NOTES[(s / 2) % 8]]] : [];
-    }
+    },
+
+    /* ----- Électro ----- */
+    kick808: pat('kick808', [0, [7, 0.8], 10]),
+    snare2:  pat('snare2',  [4, 12]),
+    clap2:   pat('clap2',   [4, [10, 0.6], 12]),
+    hat909:  pat('hat909',  [2, 6, 10, 14]),
+    rimshot: pat('rimshot', [[3, 0.7], [7, 0.7], [11, 0.7]]),
+    conga:   pat('conga',   [[0, 0.8], [3, 0.7], [6, 0.8], [10, 0.7], [13, 0.8]]),
+    shaker:  pat('shaker',  ALL16.map((s) => [s, s % 2 ? 0.5 : 0.9])),
+    tambo:   pat('tambo',   [4, 12]),
+    sub:     pat('sub',     [[0, 1, 41.2], [6, 0.9, 41.2], [10, 0.9, 49]]),
+    supersaw: pat('supersaw', [[0, 1, 220], [6, 1, 261.6], [10, 1, 196]]),
+    acid:    pat('acid',    ACID_STEPS),
+    zap:     pat('zap',     [[14, 0.7]]),
+
+    fourfloor: mix(pat('kick', [0, 4, 8, 12]), pat('clap2', [4, 12]), pat('hat909', [2, 6, 10, 14])),
+    acidline:  mix(pat('acid', ACID_STEPS), pat('kick', [0, 4, 8, 12])),
+    disco:     mix(pat('hat909', [2, 6, 10, 14]), pat('shaker', ODDS.map((s) => [s, 0.4])), pat('conga', [[3, 0.7], [10, 0.7]])),
+    rave:      mix(
+      pat('supersaw', [[0, 1, 220], [3, 1, 220], [6, 1, 261.6], [10, 1, 196], [14, 1, 196]]),
+      pat('zap', [15])
+    ),
+
+    /* ----- Lo-fi ----- */
+    boombap:  pat('boombap',  [0, [7, 0.8], 10]),
+    snap:     pat('snap',     [4, 12]),
+    rimlofi:  pat('rimlofi',  [[2, 0.6], [9, 0.6], [14, 0.6]]),
+    hatlofi:  pat('hatlofi',  EVENS.map((s) => [s, s % 4 ? 0.6 : 0.9])),
+    vinylpop: pat('vinylpop', [[1, 0.5], [6, 0.4], [11, 0.5], [13, 0.35]]),
+    bongo:    pat('bongo',    [[3, 0.8], [5, 0.6], [11, 0.8], [14, 0.6]]),
+    wood:     pat('wood',     [[2, 0.7], [7, 0.6], [12, 0.7]]),
+    bell:     pat('bell',     [[0, 0.7, 880], [6, 0.6, 988], [10, 0.6, 740]]),
+    rhodes:   pat('rhodes',   [[0, 1], [8, 0.8]]),
+    fatbass:  pat('fatbass',  [[0, 1, 55], [3, 0.8, 55], [7, 0.9, 65.4], [10, 0.9, 49]]),
+    scratch:  pat('scratch',  [[13, 0.8]]),
+    chop:     pat('chop',     [[2, 0.8, 196], [5, 0.6, 196], [11, 0.8, 233]]),
+
+    boombapbeat: mix(pat('boombap', [0, [7, 0.8], 10]), pat('snap', [4, 12]), pat('hatlofi', EVENS.map((s) => [s, 0.6]))),
+    lofichords:  mix(pat('rhodes', [0, [8, 0.8]]), pat('fatbass', [[0, 1, 55], [10, 0.9, 49]])),
+    dusty:       mix(pat('hatlofi', [2, 6, 10, 14]), pat('vinylpop', [[1, 0.5], [6, 0.4], [11, 0.5]]), pat('rimlofi', [[9, 0.6]])),
+    melody:      mix(
+      pat('bell', [[0, 0.7, 880], [3, 0.6, 988], [6, 0.6, 1175], [10, 0.6, 988], [13, 0.6, 880]]),
+      pat('wood', [[8, 0.5]])
+    ),
+
+    /* ----- FX ----- */
+    riser:    pat('riser',    [[0, 0.8]]),
+    impact:   pat('impact',   [0]),
+    siren:    pat('siren',    [[0, 0.8]]),
+    glitch:   pat('glitch',   [[6, 0.8], [11, 0.7], [15, 0.6]]),
+    bubble:   pat('bubble',   [[2, 0.7], [5, 0.6], [9, 0.7], [12, 0.5]]),
+    coin:     pat('coin',     [[0, 0.8], [8, 0.7]]),
+    drop:     pat('drop',     [[12, 0.8]]),
+    whoosh:   pat('whoosh',   [[14, 0.7]]),
+    marimba:  pat('marimba',  MARIMBA_STEPS),
+    kalimba:  pat('kalimba',  KALIMBA_STEPS),
+    gong:     pat('gong',     [[0, 0.9]]),
+    choir:    pat('choir',    [[0, 0.9, 196], [8, 0.9, 220]]),
+
+    ambient: mix(pat('gong', [[0, 0.7]]), pat('kalimba', KALIMBA_STEPS), pat('choir', [[0, 0.7, 196]])),
+    tension: mix(pat('riser', [[0, 0.8]]), pat('glitch', [[12, 0.5], [14, 0.5], [15, 0.5]])),
+    arcade:  mix(pat('coin', [0, 8]), pat('bubble', [[3, 0.6], [6, 0.5], [11, 0.6]]), pat('glitch', [[14, 0.5]])),
+    world:   mix(pat('marimba', MARIMBA_STEPS), pat('conga', [[0, 0.7], [6, 0.7], [10, 0.7]]), pat('shaker', ODDS.map((s) => [s, 0.4])))
   };
 
   // Pad qui porte chaque boucle de pad (pour jouer son éventuel son perso)
@@ -438,9 +832,75 @@
     showStep(-1);
   }
 
+  /* ---------- Affichage des pads et des banques ---------- */
+
+  // Élément du pad d'indice i, s'il est dans la banque affichée
+  function elOf(i) {
+    const p = i - bank * 16;
+    return p >= 0 && p < 16 ? padEls[p] : null;
+  }
+
+  function refreshPad(p) {
+    const i = bank * 16 + p;
+    const pad = PADS[i];
+    const el = padEls[p];
+    const sample = samples[i];
+    const active = state.loops.has(pad.loop);
+
+    el.style.setProperty('--c', pad.color);
+    el.classList.toggle('is-loop', pad.type === 'loop');
+    el.classList.toggle('custom', Boolean(sample));
+    el.classList.toggle('on', active);
+    el.setAttribute('aria-pressed', String(active));
+    el.querySelector('.name').textContent = sample ? sample.label : pad.name;
+    el.querySelector('.tag').textContent = sample ? 'Perso' : (pad.type === 'loop' ? 'Boucle' : '');
+    el.setAttribute(
+      'aria-label',
+      (pad.type === 'loop' ? 'Boucle ' : '') + pad.name +
+      (sample ? ' (son perso)' : '') +
+      ' (touche ' + pad.key.toUpperCase() + ')'
+    );
+  }
+
+  function refreshAll() {
+    for (let p = 0; p < 16; p++) refreshPad(p);
+  }
+
+  function renderLegend() {
+    const b = BANKS[bank];
+    legendEl.innerHTML = b.rows
+      .map((row, k) => '<li style="--c: ' + b.colors[k] + '">' + row + '</li>')
+      .join('');
+  }
+
+  function showBank(b) {
+    bank = b;
+
+    bankEls.forEach((el, k) => {
+      el.classList.toggle('active', k === b);
+      el.setAttribute('aria-pressed', String(k === b));
+    });
+
+    refreshAll();
+    renderLegend();
+
+    gridEl.classList.remove('swap');
+    void gridEl.offsetWidth; // relance l'animation
+    gridEl.classList.add('swap');
+  }
+
+  // Allume le voyant d'une banque quand une de ses boucles tourne
+  function updateBankTabs() {
+    bankEls.forEach((el, k) => {
+      const live = PADS.some((pad) => pad.bank === k && state.loops.has(pad.loop));
+      el.classList.toggle('live', live);
+    });
+  }
+
   /* ---------- Actions sur les pads ---------- */
 
   function flash(el) {
+    if (!el) return;
     el.classList.remove('hit');
     void el.offsetWidth; // relance l'animation
     el.classList.add('hit');
@@ -451,12 +911,12 @@
   function updateLoopRead() {
     const n = state.loops.size;
     loopRead.textContent = n === 0 ? 'Aucune boucle' : n + (n > 1 ? ' boucles' : ' boucle');
+    updateBankTabs();
   }
 
   // Active ou coupe la boucle d'un pad, et renvoie son état final
   function setLoop(i, on) {
     const pad = PADS[i];
-    const el = padEls[i];
 
     if (on) {
       state.loops.add(pad.loop);
@@ -465,8 +925,12 @@
     }
 
     const active = state.loops.has(pad.loop);
-    el.classList.toggle('on', active);
-    el.setAttribute('aria-pressed', String(active));
+    const el = elOf(i);
+
+    if (el) {
+      el.classList.toggle('on', active);
+      el.setAttribute('aria-pressed', String(active));
+    }
 
     if (state.loops.size === 0) {
       stopClock();
@@ -501,13 +965,13 @@
 
     if (pad.type === 'hit' && oneShot) {
       playPad(i, ctx.currentTime + 0.01);
-      flash(padEls[i]);
+      flash(elOf(i));
       record({ kind: 'hit', i });
       return;
     }
 
     const active = setLoop(i, !state.loops.has(pad.loop));
-    if (active) flash(padEls[i]);
+    if (active) flash(elOf(i));
     record({ kind: 'loop', i, on: active });
   }
 
@@ -527,21 +991,6 @@
   }
 
   /* ---------- Sons personnels : chargement ---------- */
-
-  function setPadLabel(i) {
-    const el = padEls[i];
-    const sample = samples[i];
-
-    el.classList.toggle('custom', Boolean(sample));
-    el.querySelector('.name').textContent = sample ? sample.label : PADS[i].name;
-    el.querySelector('.tag').textContent = sample ? 'Perso' : (PADS[i].type === 'loop' ? 'Boucle' : '');
-    el.setAttribute(
-      'aria-label',
-      (PADS[i].type === 'loop' ? 'Boucle ' : '') + PADS[i].name +
-      (sample ? ' (son perso)' : '') +
-      ' (touche ' + PADS[i].key.toUpperCase() + ')'
-    );
-  }
 
   async function loadSample(i, file) {
     if (!file) return;
@@ -566,9 +1015,9 @@
       const label = file.name.replace(/\.[^.]+$/, '').slice(0, 14);
 
       samples[i] = { buffer, label };
-      setPadLabel(i);
+      refreshAll();
       playPad(i, ctx.currentTime + 0.01);
-      flash(padEls[i]);
+      flash(elOf(i));
       toast('Son chargé sur « ' + PADS[i].name + ' ».');
     } catch (err) {
       toast('Impossible de lire ce fichier audio.');
@@ -774,7 +1223,7 @@
 
     if (ev.kind === 'hit') {
       playPad(ev.i, at);
-      play.timeouts.push(setTimeout(() => flash(padEls[ev.i]), wait));
+      play.timeouts.push(setTimeout(() => flash(elOf(ev.i)), wait));
     } else if (ev.kind === 'loop') {
       play.timeouts.push(setTimeout(() => setLoop(ev.i, ev.on), wait));
     } else {
@@ -865,28 +1314,42 @@
 
   /* ---------- Construction de l'interface ---------- */
 
-  PADS.forEach((pad, i) => {
+  // Onglets des banques
+  BANKS.forEach((b, k) => {
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'pad' + (pad.type === 'loop' ? ' is-loop' : '');
-    btn.style.setProperty('--c', pad.color);
+    btn.className = 'bank';
+    btn.textContent = b.name;
     btn.setAttribute('aria-pressed', 'false');
+    btn.addEventListener('click', () => showBank(k));
+    banksEl.appendChild(btn);
+    bankEls.push(btn);
+  });
+
+  // Les 16 pads sont créés une fois ; leur contenu change avec la banque
+  for (let p = 0; p < 16; p++) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'pad';
 
     btn.innerHTML =
       '<i class="led"></i>' +
       '<span class="name"></span>' +
       '<span class="tag"></span>' +
-      '<kbd class="key">' + pad.key + '</kbd>';
+      '<kbd class="key">' + KEYS[p] + '</kbd>';
 
     btn.addEventListener('pointerdown', (e) => {
+      const i = bank * 16 + p;
       // En mode édition, un pad avec son propre son ouvre le sélecteur de fichier (voir « click »)
-      if (editing && pad.type === 'hit') return;
+      if (editing && PADS[i].type === 'hit') return;
       e.preventDefault();
       trigger(i);
     });
 
     btn.addEventListener('click', (e) => {
-      if (editing && pad.type === 'hit') {
+      const i = bank * 16 + p;
+
+      if (editing && PADS[i].type === 'hit') {
         pickIndex = i;
         fileInput.value = '';
         fileInput.click();
@@ -905,13 +1368,12 @@
     btn.addEventListener('drop', (e) => {
       e.preventDefault();
       btn.classList.remove('drop');
-      loadSample(i, e.dataTransfer.files[0]);
+      loadSample(bank * 16 + p, e.dataTransfer.files[0]);
     });
 
     gridEl.appendChild(btn);
     padEls.push(btn);
-    setPadLabel(i);
-  });
+  }
 
   for (let i = 0; i < 16; i++) {
     const dot = document.createElement('span');
@@ -944,6 +1406,13 @@
       return;
     }
 
+    // Touches 1 à 4 : changer de banque (fonctionne aussi sur un clavier AZERTY)
+    const digit = /^(?:Digit|Numpad)([1-4])$/.exec(e.code);
+    if (digit) {
+      showBank(Number(digit[1]) - 1);
+      return;
+    }
+
     // Espace et Entrée ne servent de raccourcis que si aucun bouton n'est sélectionné
     if (!onControl && e.code === 'Space') {
       e.preventDefault();
@@ -957,8 +1426,8 @@
       return;
     }
 
-    const i = PADS.findIndex((pad) => pad.key === e.key.toLowerCase());
-    if (i !== -1) trigger(i);
+    const p = KEYS.indexOf(e.key.toLowerCase());
+    if (p !== -1) trigger(bank * 16 + p);
   });
 
   Object.keys(FX).forEach((name) => {
@@ -1008,7 +1477,7 @@
 
   resetSamples.addEventListener('click', () => {
     samples.fill(null);
-    PADS.forEach((pad, i) => setPadLabel(i));
+    refreshAll();
     toast('Sons d\'origine rétablis.');
   });
 
@@ -1116,6 +1585,7 @@
   applyFilter();
   applyEcho();
   applyTempo();
+  showBank(0);
   updateLoopRead();
   updateButtons();
 })();
