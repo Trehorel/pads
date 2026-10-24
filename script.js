@@ -120,6 +120,13 @@
   let editing = false;
   let pickIndex = -1;
 
+  /* ---------- Séquenceur ---------- */
+
+  // Rythmes dessinés par la personne : identifiant de boucle -> 16 pas ({ vol, freq } ou null)
+  const userPatterns = {};
+  let sequencing = false;
+  let seqPad = -1; // pad en cours d'édition dans le séquenceur
+
   /* ---------- État de l'enregistreur ---------- */
 
   const MAX_REC = 300; // durée maximale d'un enregistrement, en secondes
@@ -175,12 +182,20 @@
   const loopRead = document.getElementById('loopRead');
 
   const modeBtn = document.getElementById('modeBtn');
+  const seqBtn = document.getElementById('seqBtn');
   const editBtn = document.getElementById('editBtn');
   const editHint = document.getElementById('editHint');
   const resetSamples = document.getElementById('resetSamples');
   const resetAll = document.getElementById('resetAll');
   const fileInput = document.getElementById('fileInput');
   const toastEl = document.getElementById('toast');
+
+  const seqPanel = document.getElementById('seqPanel');
+  const seqPadLabel = document.getElementById('seqPad');
+  const seqGrid = document.getElementById('seqGrid');
+  const seqPlay = document.getElementById('seqPlay');
+  const seqClear = document.getElementById('seqClear');
+  const seqReset = document.getElementById('seqReset');
 
   const recBtn = document.getElementById('recBtn');
   const recLabel = document.getElementById('recLabel');
@@ -196,6 +211,7 @@
   const padEls = [];
   const stepEls = [];
   const bankEls = [];
+  const seqCells = [];
 
   if (!MIME) dlBtn.hidden = true;
 
@@ -219,9 +235,10 @@
 
   /* ---------- Sauvegarde dans le navigateur ---------- */
 
-  // Petites données (réglages, performance) : localStorage
+  // Petites données (réglages, performance, rythmes) : localStorage
   const LS_SETTINGS = 'pads.settings.v1';
   const LS_REC = 'pads.rec.v1';
+  const LS_PATTERNS = 'pads.patterns.v1';
 
   function lsGet(key) {
     try {
@@ -325,6 +342,14 @@
     if (!ok) toast('Performance non sauvegardée (espace insuffisant).');
   }
 
+  function savePatterns() {
+    if (Object.keys(userPatterns).length === 0) {
+      lsDel(LS_PATTERNS);
+      return;
+    }
+    if (!lsSet(LS_PATTERNS, userPatterns)) toast('Rythmes non sauvegardés (espace insuffisant).');
+  }
+
   function restoreSettings() {
     const s = lsGet(LS_SETTINGS);
     if (!s || typeof s !== 'object') return;
@@ -360,6 +385,22 @@
     idleStatus();
   }
 
+  function restorePatterns() {
+    const saved = lsGet(LS_PATTERNS);
+    if (!saved || typeof saved !== 'object') return;
+
+    Object.keys(saved).forEach((id) => {
+      const steps = saved[id];
+
+      const valid = LOOP_PAD[id] !== undefined &&
+        Array.isArray(steps) &&
+        steps.length === 16 &&
+        steps.every((st) => st === null || (st && typeof st.vol === 'number' && (st.freq === null || typeof st.freq === 'number')));
+
+      if (valid) userPatterns[id] = steps;
+    });
+  }
+
   // Sons perso et fichier de la dernière performance (chargés en arrière-plan)
   async function restoreFromStorage() {
     let count = 0;
@@ -393,7 +434,9 @@
       // stockage indisponible (navigation privée, par exemple) : le site marche sans sauvegarde
     }
 
-    if (count || hasActions()) toast('Ta dernière session a été restaurée.');
+    if (count || hasActions() || Object.keys(userPatterns).length) {
+      toast('Ta dernière session a été restaurée.');
+    }
   }
 
   /* ---------- Initialisation de l'audio ---------- */
@@ -974,11 +1017,34 @@
     if (pad.type === 'hit') LOOP_PAD[pad.loop] = i;
   });
 
+  // Ce que joue une boucle à un pas donné : le rythme dessiné s'il y en a un, sinon celui d'origine
+  function patternAt(id, s) {
+    const custom = userPatterns[id];
+
+    if (custom) {
+      const st = custom[s];
+      return st ? [[PADS[LOOP_PAD[id]].sound, st.freq, st.vol]] : [];
+    }
+
+    return LOOPS[id](s);
+  }
+
+  // Les 16 pas d'un pad ({ vol, freq } ou null), qu'ils soient dessinés ou d'origine
+  function getSteps(i) {
+    const id = PADS[i].loop;
+    if (userPatterns[id]) return userPatterns[id];
+
+    return ALL16.map((s) => {
+      const hit = LOOPS[id](s)[0];
+      return hit ? { vol: hit[2] === undefined ? 1 : hit[2], freq: hit[1] || null } : null;
+    });
+  }
+
   /* ---------- Horloge des boucles ---------- */
 
   function playStep(step, time) {
     state.loops.forEach((id) => {
-      LOOPS[id](step).forEach(([name, freq, vol]) => {
+      patternAt(id, step).forEach(([name, freq, vol]) => {
         const v = vol === undefined ? 1 : vol;
         const padIndex = LOOP_PAD[id];
 
@@ -1033,6 +1099,7 @@
     el.classList.toggle('is-loop', pad.type === 'loop');
     el.classList.toggle('custom', Boolean(sample));
     el.classList.toggle('on', active);
+    el.classList.toggle('sel', sequencing && i === seqPad);
     el.setAttribute('aria-pressed', String(active));
     el.querySelector('.name').textContent = sample ? sample.label : pad.name;
     el.querySelector('.tag').textContent = sample ? 'Perso' : (pad.type === 'loop' ? 'Boucle' : '');
@@ -1085,6 +1152,95 @@
     });
   }
 
+  /* ---------- Séquenceur : affichage et édition ---------- */
+
+  function updateSeqPlay() {
+    if (seqPad < 0) return;
+    const active = state.loops.has(PADS[seqPad].loop);
+    seqPlay.textContent = active ? '■ Couper' : '▶ Écouter';
+  }
+
+  function renderSeq() {
+    if (seqPad < 0) return;
+
+    const pad = PADS[seqPad];
+    const steps = getSteps(seqPad);
+
+    seqPadLabel.textContent = pad.name + (userPatterns[pad.loop] ? ' · modifié' : '');
+    seqPadLabel.style.setProperty('--c', pad.color);
+    seqGrid.style.setProperty('--c', pad.color);
+
+    seqCells.forEach((cell, s) => {
+      const st = steps[s];
+      const strong = Boolean(st) && st.vol > 0.6;
+
+      cell.classList.toggle('on', strong);
+      cell.classList.toggle('soft', Boolean(st) && !strong);
+      cell.setAttribute('aria-label', 'Pas ' + (s + 1) + ' : ' + (!st ? 'vide' : strong ? 'fort' : 'doux'));
+    });
+
+    updateSeqPlay();
+  }
+
+  // Une case passe de vide à fort, puis à doux, puis à vide
+  function cycleStep(s) {
+    if (seqPad < 0) return;
+    initAudio();
+
+    const pad = PADS[seqPad];
+    const steps = getSteps(seqPad).map((st) => (st ? { vol: st.vol, freq: st.freq } : null));
+    const cur = steps[s];
+
+    if (!cur) {
+      steps[s] = { vol: 1, freq: null };
+    } else if (cur.vol > 0.6) {
+      steps[s] = { vol: 0.5, freq: cur.freq };
+    } else {
+      steps[s] = null;
+    }
+
+    userPatterns[pad.loop] = steps;
+    savePatterns();
+    renderSeq();
+
+    // Petit aperçu du coup qu'on vient de poser
+    if (steps[s]) playPad(seqPad, ctx.currentTime + 0.01, steps[s].vol, steps[s].freq || undefined);
+  }
+
+  function selectSeqPad(i) {
+    initAudio();
+    seqPad = i;
+    playPad(i, ctx.currentTime + 0.01);
+    flash(elOf(i));
+    refreshAll();
+    renderSeq();
+  }
+
+  function setSequencing(value) {
+    sequencing = value;
+    seqBtn.setAttribute('aria-pressed', String(sequencing));
+    seqBtn.classList.toggle('active', sequencing);
+    seqPanel.hidden = !sequencing;
+
+    if (sequencing) {
+      if (editing) setEditing(false);
+      if (seqPad < 0) seqPad = bank * 16; // premier pad de la banque affichée
+      renderSeq();
+    }
+
+    refreshAll();
+  }
+
+  function setEditing(value) {
+    editing = value;
+    editBtn.setAttribute('aria-pressed', String(editing));
+    editBtn.classList.toggle('active', editing);
+    gridEl.classList.toggle('editing', editing);
+    editHint.hidden = !editing;
+
+    if (editing && sequencing) setSequencing(false);
+  }
+
   /* ---------- Actions sur les pads ---------- */
 
   function flash(el) {
@@ -1100,6 +1256,7 @@
     const n = state.loops.size;
     loopRead.textContent = n === 0 ? 'Aucune boucle' : n + (n > 1 ? ' boucles' : ' boucle');
     updateBankTabs();
+    updateSeqPlay();
   }
 
   // Active ou coupe la boucle d'un pad, et renvoie son état final
@@ -1161,6 +1318,16 @@
     const active = setLoop(i, !state.loops.has(pad.loop));
     if (active) flash(elOf(i));
     record({ kind: 'loop', i, on: active });
+  }
+
+  // Appui sur un pad : dans le séquenceur, un pad avec son à lui est sélectionné
+  // au lieu de lancer sa boucle
+  function press(i) {
+    if (sequencing && PADS[i].type === 'hit') {
+      selectSeqPad(i);
+    } else {
+      trigger(i);
+    }
   }
 
   // Arrête toutes les boucles (et note l'arrêt si on enregistre)
@@ -1543,7 +1710,7 @@
   }
 
   async function resetEverything() {
-    if (!window.confirm('Effacer tes sons, tes réglages et ta dernière performance sauvegardés ?')) return;
+    if (!window.confirm('Effacer tes sons, tes rythmes, tes réglages et ta dernière performance sauvegardés ?')) return;
 
     if (play.on) stopPlayback();
     if (rec.on) stopRecording();
@@ -1551,6 +1718,9 @@
 
     stopAll();
     samples.fill(null);
+
+    Object.keys(userPatterns).forEach((id) => delete userPatterns[id]);
+    lsDel(LS_PATTERNS);
 
     rec.events = [];
     rec.duration = 0;
@@ -1585,6 +1755,7 @@
     setTime(0);
     idleStatus();
     showBank(0);
+    renderSeq();
     updateButtons();
 
     toast('Tout est remis à zéro.');
@@ -1621,7 +1792,7 @@
       // En mode édition, un pad avec son propre son ouvre le sélecteur de fichier (voir « click »)
       if (editing && PADS[i].type === 'hit') return;
       e.preventDefault();
-      trigger(i);
+      press(i);
     });
 
     btn.addEventListener('click', (e) => {
@@ -1634,7 +1805,7 @@
         return;
       }
       // Activation au clavier (Entrée ou Espace sur un pad sélectionné)
-      if (e.detail === 0) trigger(i);
+      if (e.detail === 0) press(i);
     });
 
     // Glisser-déposer d'un fichier audio sur un pad
@@ -1659,12 +1830,24 @@
     stepEls.push(dot);
   }
 
+  // Les 16 cases du séquenceur
+  for (let s = 0; s < 16; s++) {
+    const cell = document.createElement('button');
+    cell.type = 'button';
+    cell.className = 'cell';
+    cell.addEventListener('click', () => cycleStep(s));
+    seqGrid.appendChild(cell);
+    seqCells.push(cell);
+  }
+
   let currentStep = -1;
 
+  // Montre le pas en cours, sous les pads et dans le séquenceur
   function showStep(step) {
     if (step === currentStep) return;
     currentStep = step;
     stepEls.forEach((dot, i) => dot.classList.toggle('cur', i === step));
+    seqCells.forEach((cell, i) => cell.classList.toggle('cur', i === step));
   }
 
   /* ---------- Événements ---------- */
@@ -1705,7 +1888,7 @@
     }
 
     const p = KEYS.indexOf(e.key.toLowerCase());
-    if (p !== -1) trigger(bank * 16 + p);
+    if (p !== -1) press(bank * 16 + p);
   });
 
   Object.keys(FX).forEach((name) => {
@@ -1743,12 +1926,31 @@
     saveSettings();
   });
 
-  editBtn.addEventListener('click', () => {
-    editing = !editing;
-    editBtn.setAttribute('aria-pressed', String(editing));
-    editBtn.classList.toggle('active', editing);
-    gridEl.classList.toggle('editing', editing);
-    editHint.hidden = !editing;
+  seqBtn.addEventListener('click', () => setSequencing(!sequencing));
+  editBtn.addEventListener('click', () => setEditing(!editing));
+
+  // Lance ou coupe la boucle du pad en cours d'édition
+  seqPlay.addEventListener('click', () => {
+    if (seqPad < 0) return;
+    initAudio();
+
+    const active = setLoop(seqPad, !state.loops.has(PADS[seqPad].loop));
+    if (active) flash(elOf(seqPad));
+    record({ kind: 'loop', i: seqPad, on: active });
+  });
+
+  seqClear.addEventListener('click', () => {
+    if (seqPad < 0) return;
+    userPatterns[PADS[seqPad].loop] = new Array(16).fill(null);
+    savePatterns();
+    renderSeq();
+  });
+
+  seqReset.addEventListener('click', () => {
+    if (seqPad < 0) return;
+    delete userPatterns[PADS[seqPad].loop];
+    savePatterns();
+    renderSeq();
   });
 
   fileInput.addEventListener('change', () => {
@@ -1864,6 +2066,7 @@
   /* ---------- État initial ---------- */
 
   restoreSettings();
+  restorePatterns();
   applyVolume();
   applyFilter();
   applyEcho();
