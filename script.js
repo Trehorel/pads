@@ -3,25 +3,28 @@
 
   /* ---------- Définition des pads ---------- */
 
+  // type 'hit'  : pad avec un son à lui, qui tourne en boucle sur son propre rythme
+  //               (ou se joue en coup unique si le mode « Coup unique » est actif)
+  // type 'loop' : boucle complète, sans coup unique
   const PADS = [
-    { name: 'Kick',     key: 'a', type: 'loop',  sound: 'kick',    color: '#ff5c5c' },
-    { name: 'Snare',    key: 'z', type: 'loop',  sound: 'snare',   color: '#ff5c5c' },
-    { name: 'Clap',     key: 'e', type: 'loop',  sound: 'clap',    color: '#ff5c5c' },
-    { name: 'Hat',      key: 'r', type: 'loop',  sound: 'hat',     color: '#ff5c5c' },
+    { name: 'Kick',     key: 'a', type: 'hit',  sound: 'kick',    loop: 'kick',     color: '#ff5c5c' },
+    { name: 'Snare',    key: 'z', type: 'hit',  sound: 'snare',   loop: 'snare',    color: '#ff5c5c' },
+    { name: 'Clap',     key: 'e', type: 'hit',  sound: 'clap',    loop: 'clap',     color: '#ff5c5c' },
+    { name: 'Hat',      key: 'r', type: 'hit',  sound: 'hat',     loop: 'hat',      color: '#ff5c5c' },
 
-    { name: 'Open hat', key: 'q', type: 'loop',  sound: 'openhat', color: '#ffb23c' },
-    { name: 'Tom',      key: 's', type: 'loop',  sound: 'tom',     color: '#ffb23c' },
-    { name: 'Rim',      key: 'd', type: 'loop',  sound: 'rim',     color: '#ffb23c' },
-    { name: 'Cowbell',  key: 'f', type: 'loop',  sound: 'cowbell', color: '#ffb23c' },
+    { name: 'Open hat', key: 'q', type: 'hit',  sound: 'openhat', loop: 'openhat',  color: '#ffb23c' },
+    { name: 'Tom',      key: 's', type: 'hit',  sound: 'tom',     loop: 'tom',      color: '#ffb23c' },
+    { name: 'Rim',      key: 'd', type: 'hit',  sound: 'rim',     loop: 'rim',      color: '#ffb23c' },
+    { name: 'Cowbell',  key: 'f', type: 'hit',  sound: 'cowbell', loop: 'cowbell',  color: '#ffb23c' },
 
-    { name: 'Basse',    key: 'w', type: 'loop',  sound: 'bass',    color: '#3cd6ff' },
-    { name: 'Accord',   key: 'x', type: 'loop',  sound: 'stab',    color: '#3cd6ff' },
-    { name: 'Pluck',    key: 'c', type: 'loop',  sound: 'pluck',   color: '#3cd6ff' },
-    { name: 'Laser',    key: 'v', type: 'loop',  sound: 'laser',   color: '#3cd6ff' },
+    { name: 'Basse',    key: 'w', type: 'hit',  sound: 'bass',    loop: 'bass',     color: '#3cd6ff' },
+    { name: 'Accord',   key: 'x', type: 'hit',  sound: 'stab',    loop: 'stab',     color: '#3cd6ff' },
+    { name: 'Pluck',    key: 'c', type: 'hit',  sound: 'pluck',   loop: 'pluck',    color: '#3cd6ff' },
+    { name: 'Laser',    key: 'v', type: 'hit',  sound: 'laser',   loop: 'laser',    color: '#3cd6ff' },
 
     { name: 'Beat',     key: 't', type: 'loop', loop: 'beat',     color: '#b57cff' },
     { name: 'Hats',     key: 'y', type: 'loop', loop: 'hats',     color: '#b57cff' },
-    { name: 'Basse',    key: 'u', type: 'loop', loop: 'bass',     color: '#b57cff' },
+    { name: 'Bassline', key: 'u', type: 'loop', loop: 'bassline', color: '#b57cff' },
     { name: 'Arp',      key: 'i', type: 'loop', loop: 'arp',      color: '#b57cff' }
   ];
 
@@ -47,6 +50,9 @@
     loops: new Set(),
     queue: []
   };
+
+  // true : un appui joue un seul coup ; false : un appui lance ou coupe la boucle du pad
+  let oneShot = false;
 
   /* ---------- Sons personnels ---------- */
 
@@ -107,6 +113,7 @@
   const bpmRead = document.getElementById('bpmRead');
   const loopRead = document.getElementById('loopRead');
 
+  const modeBtn = document.getElementById('modeBtn');
   const editBtn = document.getElementById('editBtn');
   const editHint = document.getElementById('editHint');
   const resetSamples = document.getElementById('resetSamples');
@@ -307,27 +314,62 @@
   };
 
   // Joue le son d'un pad : le son personnel s'il y en a un, sinon le son d'origine
-  function playPad(i, t) {
-    const pad = PADS[i];
+  function playPad(i, t, v = 1, f = undefined) {
     const sample = samples[i];
 
     if (sample) {
       const src = ctx.createBufferSource();
       src.buffer = sample.buffer;
-      src.connect(filter);
+
+      if (v !== 1) {
+        const g = ctx.createGain();
+        g.gain.value = v;
+        src.connect(g).connect(filter);
+      } else {
+        src.connect(filter);
+      }
+
       src.start(t, 0, Math.min(sample.buffer.duration, MAX_SAMPLE_SECONDS));
     } else {
-      SOUNDS[pad.sound](t, filter, pad.freq);
+      SOUNDS[PADS[i].sound](t, filter, f, v);
     }
   }
 
   /* ---------- Boucles (16 pas) ---------- */
+
+  // Construit le rythme d'un son : chaque élément est un numéro de pas,
+  // ou [pas, volume, fréquence]
+  function pat(sound, steps) {
+    const map = new Map();
+
+    steps.forEach((item) => {
+      const [step, vol = 1, freq = null] = Array.isArray(item) ? item : [item];
+      map.set(step, [sound, freq, vol]);
+    });
+
+    return (s) => (map.has(s) ? [map.get(s)] : []);
+  }
 
   const BASS_LINE = [55, 0, 0, 55, 0, 0, 65.4, 0, 0, 55, 0, 73.4, 0, 0, 65.4, 0];
   const ARP_NOTES = [440, 523.3, 659.3, 784, 659.3, 523.3, 440, 392];
 
   // Chaque boucle renvoie, pour un pas donné, une liste de [son, fréquence, volume]
   const LOOPS = {
+    // Un rythme par pad
+    kick:    pat('kick',    [0, 4, 8, 12]),
+    snare:   pat('snare',   [4, 12, [7, 0.35], [15, 0.35]]),
+    clap:    pat('clap',    [6, 14]),
+    hat:     pat('hat',     [0, 2, 4, 6, 8, 10, 12, 14]),
+    openhat: pat('openhat', [[2, 0.7], [6, 0.7], [10, 0.7], [14, 0.7]]),
+    tom:     pat('tom',     [[3, 0.8], [6, 0.8], [11, 0.8]]),
+    rim:     pat('rim',     [2, 5, 10, 13]),
+    cowbell: pat('cowbell', [[3, 0.8], [6, 0.8], [10, 0.8], [14, 0.8]]),
+    bass:    pat('bass',    [[0, 1, 55], [6, 1, 55], [10, 1, 65.4]]),
+    stab:    pat('stab',    [2, 10, 14]),
+    pluck:   pat('pluck',   [[0, 1, 659.3], [3, 1, 784], [6, 1, 880], [8, 1, 659.3], [11, 1, 784], [14, 1, 988]]),
+    laser:   pat('laser',   [[12, 0.8]]),
+
+    // Boucles complètes
     beat(s) {
       const hits = [];
       if (s % 4 === 0) hits.push(['kick']);
@@ -341,7 +383,7 @@
       return [['hat', null, 1]];
     },
 
-    bass(s) {
+    bassline(s) {
       return BASS_LINE[s] ? [['bass', BASS_LINE[s]]] : [];
     },
 
@@ -350,12 +392,25 @@
     }
   };
 
+  // Pad qui porte chaque boucle de pad (pour jouer son éventuel son perso)
+  const LOOP_PAD = {};
+  PADS.forEach((pad, i) => {
+    if (pad.type === 'hit') LOOP_PAD[pad.loop] = i;
+  });
+
   /* ---------- Horloge des boucles ---------- */
 
   function playStep(step, time) {
     state.loops.forEach((id) => {
       LOOPS[id](step).forEach(([name, freq, vol]) => {
-        SOUNDS[name](time, filter, freq || undefined, vol === undefined ? 1 : vol);
+        const v = vol === undefined ? 1 : vol;
+        const padIndex = LOOP_PAD[id];
+
+        if (padIndex !== undefined) {
+          playPad(padIndex, time, v, freq || undefined);
+        } else {
+          SOUNDS[name](time, filter, freq || undefined, v);
+        }
       });
     });
     state.queue.push({ step, time });
@@ -398,7 +453,7 @@
     loopRead.textContent = n === 0 ? 'Aucune boucle' : n + (n > 1 ? ' boucles' : ' boucle');
   }
 
-  // Active ou coupe une boucle, et renvoie son état final
+  // Active ou coupe la boucle d'un pad, et renvoie son état final
   function setLoop(i, on) {
     const pad = PADS[i];
     const el = padEls[i];
@@ -425,11 +480,9 @@
 
   function stopAll() {
     state.loops.clear();
-    padEls.forEach((el, i) => {
-      if (PADS[i].type === 'loop') {
-        el.classList.remove('on');
-        el.setAttribute('aria-pressed', 'false');
-      }
+    padEls.forEach((el) => {
+      el.classList.remove('on');
+      el.setAttribute('aria-pressed', 'false');
     });
     stopClock();
     updateLoopRead();
@@ -446,17 +499,19 @@
     initAudio();
     const pad = PADS[i];
 
-    if (pad.type === 'loop') {
-      const active = setLoop(i, !state.loops.has(pad.loop));
-      record({ kind: 'loop', i, on: active });
-    } else {
+    if (pad.type === 'hit' && oneShot) {
       playPad(i, ctx.currentTime + 0.01);
       flash(padEls[i]);
       record({ kind: 'hit', i });
+      return;
     }
+
+    const active = setLoop(i, !state.loops.has(pad.loop));
+    if (active) flash(padEls[i]);
+    record({ kind: 'loop', i, on: active });
   }
 
-  // Arrête les boucles (et note l'arrêt si on enregistre)
+  // Arrête toutes les boucles (et note l'arrêt si on enregistre)
   function stopAction() {
     if (play.on) {
       stopPlayback();
@@ -464,7 +519,7 @@
     }
 
     PADS.forEach((pad, i) => {
-      if (pad.type === 'loop' && state.loops.has(pad.loop)) {
+      if (state.loops.has(pad.loop)) {
         record({ kind: 'loop', i, on: false });
       }
     });
@@ -492,7 +547,7 @@
     if (!file) return;
 
     if (PADS[i].type !== 'hit') {
-      toast('Les boucles ne peuvent pas recevoir de son perso.');
+      toast('Ce pad est une boucle complète : il ne peut pas recevoir de son perso.');
       return;
     }
     if (file.type && !file.type.startsWith('audio/')) {
@@ -650,7 +705,7 @@
 
     // Les boucles déjà lancées font partie de la performance, dès le début
     PADS.forEach((pad, i) => {
-      if (pad.type === 'loop' && state.loops.has(pad.loop)) {
+      if (state.loops.has(pad.loop)) {
         rec.events.push({ kind: 'loop', i, on: true, t: 0 });
       }
     });
@@ -815,6 +870,7 @@
     btn.type = 'button';
     btn.className = 'pad' + (pad.type === 'loop' ? ' is-loop' : '');
     btn.style.setProperty('--c', pad.color);
+    btn.setAttribute('aria-pressed', 'false');
 
     btn.innerHTML =
       '<i class="led"></i>' +
@@ -822,10 +878,8 @@
       '<span class="tag"></span>' +
       '<kbd class="key">' + pad.key + '</kbd>';
 
-    if (pad.type === 'loop') btn.setAttribute('aria-pressed', 'false');
-
     btn.addEventListener('pointerdown', (e) => {
-      // En mode édition, un pad ordinaire ouvre le sélecteur de fichier (voir « click »)
+      // En mode édition, un pad avec son propre son ouvre le sélecteur de fichier (voir « click »)
       if (editing && pad.type === 'hit') return;
       e.preventDefault();
       trigger(i);
@@ -930,6 +984,14 @@
   });
 
   stopBtn.addEventListener('click', stopAction);
+
+  modeBtn.addEventListener('click', () => {
+    oneShot = !oneShot;
+    modeBtn.classList.toggle('active', !oneShot);
+    modeBtn.setAttribute('aria-pressed', String(!oneShot));
+    modeBtn.textContent = oneShot ? '● Coup unique' : '↻ Tout en boucle';
+    toast(oneShot ? 'Chaque appui joue un seul coup.' : 'Tous les pads tournent en boucle.');
+  });
 
   editBtn.addEventListener('click', () => {
     editing = !editing;
