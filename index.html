@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#0a0a0f">
   <title>PADS · Sampler en ligne</title>
-  <meta name="description" content="Un sampler dans le navigateur : 64 pads en 4 banques, des boucles, tes propres sons, du filtre et de l'écho. Joue au clavier ou au doigt, enregistre et télécharge ta performance.">
+  <meta name="description" content="Un sampler dans le navigateur : 64 pads en 4 banques, un séquenceur, des boucles, tes propres sons, du filtre et de l'écho. Joue au clavier ou au doigt, enregistre et télécharge ta performance.">
   <meta property="og:title" content="PADS · Sampler en ligne">
-  <meta property="og:description" content="64 sons en 4 banques, des boucles et des effets. Joue, enregistre, télécharge.">
+  <meta property="og:description" content="64 sons en 4 banques, un séquenceur et des effets. Joue, enregistre, télécharge.">
   <meta property="og:type" content="website">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🥁</text></svg>">
   <link rel="stylesheet" href="style.css">
@@ -39,13 +39,14 @@
 
         <div class="bar-actions">
           <button id="modeBtn" class="chip active" type="button" aria-pressed="true">↻ Tout en boucle</button>
+          <button id="seqBtn" class="chip" type="button" aria-pressed="false">▦ Séquenceur</button>
           <button id="editBtn" class="chip" type="button" aria-pressed="false">✎ Mode édition</button>
         </div>
       </div>
 
       <p id="editHint" class="edit-hint" hidden>
         Touche un pad pour y charger un son de ton appareil, ou glisse un fichier audio dessus.
-        Tes sons, tes réglages et ta dernière performance sont sauvegardés automatiquement dans ce navigateur.
+        Tes sons, tes rythmes, tes réglages et ta dernière performance sont sauvegardés automatiquement dans ce navigateur.
         <button id="resetSamples" class="link" type="button">Rétablir les sons d'origine</button>
         ·
         <button id="resetAll" class="link" type="button">Tout réinitialiser</button>
@@ -54,6 +55,26 @@
       <section id="grid" class="grid" aria-label="Grille de pads"></section>
 
       <div id="steps" class="steps" aria-hidden="true"></div>
+
+      <section id="seqPanel" class="panel seq" aria-label="Séquenceur" hidden>
+        <div class="panel-head">
+          <h2 class="panel-title">Séquenceur</h2>
+          <span id="seqPad" class="seq-pad">Choisis un pad</span>
+        </div>
+
+        <div id="seqGrid" class="seq-grid" role="group" aria-label="16 pas du rythme"></div>
+
+        <div class="rec-row">
+          <button id="seqPlay" class="btn" type="button">▶ Écouter</button>
+          <button id="seqClear" class="btn" type="button">Vider</button>
+          <button id="seqReset" class="btn" type="button">Rétablir</button>
+        </div>
+
+        <p class="status seq-hint">
+          Touche un pad de batterie, de percussions ou de synthés, puis dessine son rythme.
+          Chaque case passe de fort à doux, puis vide.
+        </p>
+      </section>
 
       <section class="panel recorder" aria-label="Enregistreur">
         <div class="panel-head">
