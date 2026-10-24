@@ -52,10 +52,21 @@
         ['Marimba', 'marimba'], ['Kalimba', 'kalimba'], ['Gong', 'gong'], ['Chœur', 'choir']
       ],
       loops: [['Ambiance', 'ambient'], ['Tension', 'tension'], ['Arcade', 'arcade'], ['Monde', 'world']]
+    },
+    {
+      name: 'DJ',
+      rows: ['Effets DJ', 'Voix et foule', 'Drops', 'Boucles complètes'],
+      colors: ['#ffe14a', '#4affb8', '#ff5ca8', '#8f7bff'],
+      pads: [
+        ['Airhorn', 'airhorn'], ['Rewind', 'rewind'], ['Scratch', 'scratchbaby'], ['Transform', 'scratchtrans'],
+        ['Hey', 'voxhey'], ['Ooh', 'voxooh'], ['Foule', 'crowd'], ['Sifflet', 'whistle'],
+        ['Build', 'build'], ['Bass drop', 'bassdrop'], ['Stutter', 'stutter'], ['Woop', 'woop']
+      ],
+      loops: [['House', 'djhouse'], ['Build-up', 'djbuild'], ['Drop', 'djdrop'], ['Cuts', 'djscratch']]
     }
   ];
 
-  // Liste à plat des 64 pads : l'indice d'un pad est banque × 16 + position
+  // Liste à plat des 80 pads : l'indice d'un pad est banque × 16 + position
   const PADS = [];
 
   BANKS.forEach((b, bankIndex) => {
@@ -566,6 +577,46 @@
     freqs.forEach((fr) => tone(t, lp, { type, f0: fr, dur, vol }));
   }
 
+  // Petit tremblement de la hauteur d'un oscillateur (vibrato)
+  function addVibrato(osc, t, dur, rate, depth) {
+    const lfo = ctx.createOscillator();
+    const amount = ctx.createGain();
+    lfo.frequency.value = rate;
+    amount.gain.value = depth;
+    lfo.connect(amount).connect(osc.frequency);
+    lfo.start(t);
+    lfo.stop(t + dur + 0.05);
+  }
+
+  // Voix synthétique : une note passe par des filtres qui imitent les voyelles.
+  // formants : [[début, fin, netteté], ...] en Hz, vibrato : [vitesse, profondeur]
+  function vowel(t, out, { f0, f1 = f0, formants, dur = 0.3, vol = 1, attack = 0.02, vibrato = null }) {
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(f0, t);
+    o.frequency.linearRampToValueAtTime(f1, t + dur);
+
+    if (vibrato) addVibrato(o, t, dur, vibrato[0], vibrato[1]);
+
+    formants.forEach(([from, to, q]) => {
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.Q.value = q;
+      bp.frequency.setValueAtTime(from, t);
+      bp.frequency.linearRampToValueAtTime(to, t + dur);
+      o.connect(bp).connect(g);
+    });
+
+    g.gain.setValueAtTime(0.001, t);
+    g.gain.linearRampToValueAtTime(vol, t + attack);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    g.connect(out);
+
+    o.start(t);
+    o.stop(t + dur + 0.05);
+  }
+
   /* ---------- Sons ---------- */
 
   const SOUNDS = {
@@ -855,6 +906,196 @@
       [f, f * 1.26, f * 1.5].forEach((fr, k) => {
         tone(t, bp, { type: 'sawtooth', f0: fr * (1 + (k - 1) * 0.004), dur: 0.9, vol: 0.2 });
       });
+    },
+
+    /* ----- DJ ----- */
+
+    // Le klaxon de DJ : plusieurs notes de cuivre qui montent en un instant
+    airhorn(t, out, f, v = 1) {
+      const lp = ctx.createBiquadFilter();
+      const g = ctx.createGain();
+      lp.type = 'lowpass';
+      lp.frequency.value = 3200;
+      g.gain.setValueAtTime(0.001, t);
+      g.gain.linearRampToValueAtTime(0.12 * v, t + 0.03);
+      g.gain.setValueAtTime(0.12 * v, t + 0.45);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.75);
+      lp.connect(g).connect(out);
+
+      [392, 494, 587, 784].forEach((fr, k) => {
+        const o = ctx.createOscillator();
+        o.type = 'sawtooth';
+        o.frequency.setValueAtTime(fr * 0.93, t);
+        o.frequency.exponentialRampToValueAtTime(fr, t + 0.06);
+        o.detune.value = (k - 1.5) * 6;
+        o.connect(lp);
+        o.start(t);
+        o.stop(t + 0.8);
+      });
+    },
+
+    // Le disque qu'on rembobine : la hauteur s'effondre
+    rewind(t, out, f, v = 1) {
+      tone(t, out, { type: 'sawtooth', f0: 1400, f1: 50, dur: 0.55, vol: 0.18 * v });
+      sweepNoise(t, out, { f0: 5000, f1: 250, dur: 0.55, q: 1.5, vol: 0.35 * v });
+    },
+
+    // Un aller-retour de scratch
+    scratchbaby(t, out, f, v = 1) {
+      const o = ctx.createOscillator();
+      const bp = ctx.createBiquadFilter();
+      const g = ctx.createGain();
+      o.type = 'sawtooth';
+      o.frequency.setValueAtTime(220, t);
+      o.frequency.exponentialRampToValueAtTime(900, t + 0.09);
+      o.frequency.exponentialRampToValueAtTime(250, t + 0.2);
+      bp.type = 'bandpass';
+      bp.frequency.value = 1400;
+      bp.Q.value = 3;
+      g.gain.setValueAtTime(0.5 * v, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+      o.connect(bp).connect(g).connect(out);
+      o.start(t);
+      o.stop(t + 0.24);
+      burst(t, out, { type: 'bandpass', freq: 3000, dur: 0.05, vol: 0.15 * v });
+    },
+
+    // Scratch haché : le son est coupé et relancé quatre fois très vite
+    scratchtrans(t, out, f, v = 1) {
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = 1500;
+      bp.Q.value = 2;
+      bp.connect(out);
+
+      for (let k = 0; k < 4; k++) {
+        tone(t + k * 0.07, bp, { type: 'sawtooth', f0: 300, f1: 700, dur: 0.055, vol: 0.5 * v });
+      }
+    },
+
+    // « Hey ! » : une voix qui passe du « é » au « a »
+    voxhey(t, out, f, v = 1) {
+      burst(t, out, { type: 'highpass', freq: 3000, dur: 0.04, vol: 0.2 * v });
+      vowel(t, out, {
+        f0: 210,
+        f1: 170,
+        formants: [[450, 650, 6], [2000, 1300, 8]],
+        dur: 0.3,
+        vol: 1.2 * v,
+        attack: 0.03
+      });
+    },
+
+    // « Ooh » tenu, avec un léger vibrato
+    voxooh(t, out, f, v = 1) {
+      vowel(t, out, {
+        f0: 196,
+        formants: [[300, 300, 6], [800, 800, 8]],
+        dur: 0.8,
+        vol: 1.1 * v,
+        attack: 0.12,
+        vibrato: [5.5, 4]
+      });
+    },
+
+    // Acclamations de la foule : deux couches de bruit qui gonflent puis retombent
+    crowd(t, out, f, v = 1) {
+      [[1500, 0.7, 0.35], [3200, 1, 0.2]].forEach(([freq, q, vol]) => {
+        const s = ctx.createBufferSource();
+        const bp = ctx.createBiquadFilter();
+        const g = ctx.createGain();
+        s.buffer = noiseBuf;
+        s.loop = true;
+        bp.type = 'bandpass';
+        bp.frequency.value = freq;
+        bp.Q.value = q;
+        g.gain.setValueAtTime(0.001, t);
+        g.gain.linearRampToValueAtTime(vol * v, t + 0.3);
+        g.gain.exponentialRampToValueAtTime(0.001, t + 1.5);
+        s.connect(bp).connect(g).connect(out);
+        s.start(t);
+        s.stop(t + 1.6);
+      });
+    },
+
+    // Sifflet de DJ
+    whistle(t, out, f, v = 1) {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = 'sine';
+      o.frequency.setValueAtTime(2400, t);
+      o.frequency.linearRampToValueAtTime(3100, t + 0.15);
+      g.gain.setValueAtTime(0.001, t);
+      g.gain.linearRampToValueAtTime(0.22 * v, t + 0.02);
+      g.gain.setValueAtTime(0.22 * v, t + 0.3);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
+      addVibrato(o, t, 0.45, 12, 50);
+      o.connect(g).connect(out);
+      o.start(t);
+      o.stop(t + 0.47);
+    },
+
+    // Roulement de caisse claire qui accélère et monte en puissance
+    build(t, out, f, v = 1) {
+      let at = 0;
+      let gap = 0.22;
+      let vol = 0.2;
+
+      while (at < 1.5) {
+        burst(t + at, out, { type: 'highpass', freq: 2000, dur: 0.07, vol: v * vol });
+        tone(t + at, out, { type: 'triangle', f0: 220, f1: 150, dur: 0.08, vol: 0.25 * vol * v });
+        at += gap;
+        gap = Math.max(0.035, gap * 0.82);
+        vol = Math.min(1, vol + 0.07);
+      }
+    },
+
+    // Grosse basse qui s'écroule
+    bassdrop(t, out, f, v = 1) {
+      const o = ctx.createOscillator();
+      const lp = ctx.createBiquadFilter();
+      const g = ctx.createGain();
+      o.type = 'sawtooth';
+      o.frequency.setValueAtTime(110, t);
+      o.frequency.exponentialRampToValueAtTime(35, t + 1.0);
+      lp.type = 'lowpass';
+      lp.frequency.setValueAtTime(1200, t);
+      lp.frequency.exponentialRampToValueAtTime(120, t + 1.0);
+      g.gain.setValueAtTime(0.5 * v, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 1.3);
+      o.connect(lp).connect(g).connect(out);
+      o.start(t);
+      o.stop(t + 1.35);
+      tone(t, out, { type: 'sine', f0: 60, f1: 28, dur: 1.3, vol: 0.8 * v });
+    },
+
+    // Petites notes répétées de plus en plus aiguës
+    stutter(t, out, f, v = 1) {
+      for (let k = 0; k < 6; k++) {
+        tone(t + k * 0.055, out, { type: 'square', f0: 330 + k * 40, dur: 0.04, vol: 0.12 * v });
+      }
+    },
+
+    // Sirène « woop woop » : trois montées rapides
+    woop(t, out, f, v = 1) {
+      const o = ctx.createOscillator();
+      const lp = ctx.createBiquadFilter();
+      const g = ctx.createGain();
+      o.type = 'square';
+
+      for (let k = 0; k < 3; k++) {
+        o.frequency.setValueAtTime(500, t + k * 0.22);
+        o.frequency.exponentialRampToValueAtTime(1400, t + k * 0.22 + 0.2);
+      }
+
+      lp.type = 'lowpass';
+      lp.frequency.value = 3000;
+      g.gain.setValueAtTime(0.14 * v, t);
+      g.gain.setValueAtTime(0.14 * v, t + 0.55);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.7);
+      o.connect(lp).connect(g).connect(out);
+      o.start(t);
+      o.stop(t + 0.72);
     }
   };
 
@@ -1008,7 +1249,48 @@
     ambient: mix(pat('gong', [[0, 0.7]]), pat('kalimba', KALIMBA_STEPS), pat('choir', [[0, 0.7, 196]])),
     tension: mix(pat('riser', [[0, 0.8]]), pat('glitch', [[12, 0.5], [14, 0.5], [15, 0.5]])),
     arcade:  mix(pat('coin', [0, 8]), pat('bubble', [[3, 0.6], [6, 0.5], [11, 0.6]]), pat('glitch', [[14, 0.5]])),
-    world:   mix(pat('marimba', MARIMBA_STEPS), pat('conga', [[0, 0.7], [6, 0.7], [10, 0.7]]), pat('shaker', ODDS.map((s) => [s, 0.4])))
+    world:   mix(pat('marimba', MARIMBA_STEPS), pat('conga', [[0, 0.7], [6, 0.7], [10, 0.7]]), pat('shaker', ODDS.map((s) => [s, 0.4]))),
+
+    /* ----- DJ : un rythme par pad ----- */
+    airhorn:      pat('airhorn',      [[0, 0.9], [3, 0.7], [6, 0.7]]),
+    rewind:       pat('rewind',       [[12, 0.8]]),
+    scratchbaby:  pat('scratchbaby',  [[2, 0.8], [5, 0.7], [9, 0.8], [13, 0.7]]),
+    scratchtrans: pat('scratchtrans', [[6, 0.8], [14, 0.8]]),
+    voxhey:       pat('voxhey',       [[4, 0.9], [12, 0.9]]),
+    voxooh:       pat('voxooh',       [[0, 0.7], [8, 0.7]]),
+    crowd:        pat('crowd',        [[0, 0.8]]),
+    whistle:      pat('whistle',      [[10, 0.8]]),
+    build:        pat('build',        [[0, 0.9]]),
+    bassdrop:     pat('bassdrop',     [[0, 1]]),
+    stutter:      pat('stutter',      [[3, 0.8], [11, 0.8]]),
+    woop:         pat('woop',         [[0, 0.8], [8, 0.7]]),
+
+    /* ----- DJ : boucles complètes ----- */
+    djhouse: mix(
+      pat('kick', [0, 4, 8, 12]),
+      pat('clap', [4, 12]),
+      pat('openhat', [[2, 0.7], [6, 0.7], [10, 0.7], [14, 0.7]]),
+      pat('hat', ODDS.map((s) => [s, 0.4])),
+      pat('bass', [[2, 0.9, 55], [6, 0.9, 55], [10, 0.9, 65.4], [14, 0.9, 55]])
+    ),
+    djbuild: mix(
+      pat('snare', ALL16.map((s) => [s, 0.2 + s * 0.05])),
+      pat('riser', [[0, 0.7]]),
+      pat('kick', [0, 4, 8, 12])
+    ),
+    djdrop: mix(
+      pat('impact', [0]),
+      pat('kick808', [0, [7, 0.8], 10]),
+      pat('clap2', [4, 12]),
+      pat('sub', [[0, 1, 41.2], [6, 0.9, 41.2], [10, 0.9, 49]]),
+      pat('hat909', [2, 6, 10, 14])
+    ),
+    djscratch: mix(
+      pat('kick', [0, 4, 8, 12]),
+      pat('hat', [2, 6, 10, 14]),
+      pat('scratchbaby', [[3, 0.8], [7, 0.7], [11, 0.8]]),
+      pat('scratchtrans', [[14, 0.8]])
+    )
   };
 
   // Pad qui porte chaque boucle de pad (pour jouer son éventuel son perso)
@@ -1867,8 +2149,8 @@
       return;
     }
 
-    // Touches 1 à 4 : changer de banque (fonctionne aussi sur un clavier AZERTY)
-    const digit = /^(?:Digit|Numpad)([1-4])$/.exec(e.code);
+    // Touches 1 à 5 : changer de banque (fonctionne aussi sur un clavier AZERTY)
+    const digit = /^(?:Digit|Numpad)([1-5])$/.exec(e.code);
     if (digit) {
       selectBank(Number(digit[1]) - 1);
       return;
