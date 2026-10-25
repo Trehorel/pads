@@ -510,617 +510,1067 @@
     audioState.classList.add('on');
   }
 
-  /* ---------- Briques de synthèse ---------- */
+/* ---------- Briques de synthèse ---------- */
 
-  // Oscillateur avec enveloppe qui décroît (et glissando optionnel de f0 vers f1)
-  function tone(t, out, { type = 'sine', f0, f1, dur = 0.3, vol = 1 }) {
-    const o = ctx.createOscillator();
-    const g = ctx.createGain();
-    o.type = type;
-    o.frequency.setValueAtTime(f0, t);
-    if (f1) o.frequency.exponentialRampToValueAtTime(f1, t + dur);
-    g.gain.setValueAtTime(vol, t);
-    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-    o.connect(g).connect(out);
-    o.start(t);
-    o.stop(t + dur + 0.02);
-  }
+// Nombre au hasard entre -a et +a, et petite variation d'une valeur :
+// deux coups de suite ne sont jamais tout à fait identiques, comme avec un vrai instrument
+const rand = (a) => (Math.random() * 2 - 1) * a;
+const jit = (x, a) => x * (1 + rand(a));
 
-  // Petit souffle de bruit filtré
-  function burst(t, out, { type = 'highpass', freq = 7000, q = 1, dur = 0.05, vol = 1 }) {
-    const s = ctx.createBufferSource();
-    const f = ctx.createBiquadFilter();
-    const g = ctx.createGain();
-    s.buffer = noiseBuf;
-    f.type = type;
-    f.frequency.value = freq;
-    f.Q.value = q;
-    g.gain.setValueAtTime(vol, t);
-    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-    s.connect(f).connect(g).connect(out);
-    s.start(t);
-    s.stop(t + dur + 0.02);
-  }
+// Réverbération (écho de salle) partagée par tous les sons
+let reverbIn = null;
 
-  // Bruit dont le filtre glisse de f0 vers f1 (montée si up, sinon descente)
-  function sweepNoise(t, out, { f0, f1, dur = 0.5, q = 2, vol = 0.5, up = false }) {
-    const s = ctx.createBufferSource();
-    const f = ctx.createBiquadFilter();
-    const g = ctx.createGain();
-    s.buffer = noiseBuf;
-    s.loop = true;
-    f.type = 'bandpass';
-    f.Q.value = q;
-    f.frequency.setValueAtTime(f0, t);
-    f.frequency.exponentialRampToValueAtTime(f1, t + dur);
+function getReverb() {
+  if (reverbIn) return reverbIn;
 
-    if (up) {
-      g.gain.setValueAtTime(0.01, t);
-      g.gain.exponentialRampToValueAtTime(vol, t + dur);
-      g.gain.exponentialRampToValueAtTime(0.001, t + dur + 0.05);
-    } else {
-      g.gain.setValueAtTime(vol, t);
-      g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  // Réponse de la salle : du bruit qui s'éteint et s'assombrit au fil du temps
+  const len = Math.floor(ctx.sampleRate * 1.8);
+  const ir = ctx.createBuffer(2, len, ctx.sampleRate);
+
+  for (let c = 0; c < 2; c++) {
+    const data = ir.getChannelData(c);
+    let smooth = 0;
+
+    for (let i = 0; i < len; i++) {
+      const decay = Math.pow(1 - i / len, 3);
+      const alpha = 0.9 - 0.8 * (i / len);
+      smooth += ((Math.random() * 2 - 1) * decay - smooth) * alpha;
+      data[i] = smooth;
     }
-
-    s.connect(f).connect(g).connect(out);
-    s.start(t);
-    s.stop(t + dur + 0.1);
   }
 
-  // Plusieurs notes jouées ensemble à travers un filtre passe-bas
-  function chord(t, out, freqs, { type = 'sawtooth', cutoff = 2000, dur = 0.3, vol = 0.12 }) {
-    const lp = ctx.createBiquadFilter();
-    lp.type = 'lowpass';
-    lp.frequency.value = cutoff;
-    lp.connect(out);
-    freqs.forEach((fr) => tone(t, lp, { type, f0: fr, dur, vol }));
+  const conv = ctx.createConvolver();
+  const level = ctx.createGain();
+  conv.buffer = ir;
+  level.gain.value = 0.9;
+  conv.connect(level);
+  level.connect(filter);
+
+  reverbIn = conv;
+  return conv;
+}
+
+// Envoie une partie d'un son dans la réverbération
+function wet(node, amount) {
+  const g = ctx.createGain();
+  g.gain.value = amount;
+  node.connect(g).connect(getReverb());
+}
+
+// Saturation douce : donne du mordant (grosses caisses, basses, cuivres)
+const satCurves = {};
+
+function saturator(amount = 2) {
+  if (!satCurves[amount]) {
+    const n = 1024;
+    const curve = new Float32Array(n);
+
+    for (let i = 0; i < n; i++) {
+      const x = (i / (n - 1)) * 2 - 1;
+      curve[i] = Math.tanh(x * amount) / Math.tanh(amount);
+    }
+    satCurves[amount] = curve;
   }
 
-  // Petit tremblement de la hauteur d'un oscillateur (vibrato)
-  function addVibrato(osc, t, dur, rate, depth) {
-    const lfo = ctx.createOscillator();
-    const amount = ctx.createGain();
-    lfo.frequency.value = rate;
-    amount.gain.value = depth;
-    lfo.connect(amount).connect(osc.frequency);
-    lfo.start(t);
-    lfo.stop(t + dur + 0.05);
-  }
+  const shaper = ctx.createWaveShaper();
+  shaper.curve = satCurves[amount];
+  shaper.oversample = '2x';
+  return shaper;
+}
 
-  // Voix synthétique : une note passe par des filtres qui imitent les voyelles.
-  // formants : [[début, fin, netteté], ...] en Hz, vibrato : [vitesse, profondeur]
-  function vowel(t, out, { f0, f1 = f0, formants, dur = 0.3, vol = 1, attack = 0.02, vibrato = null }) {
-    const o = ctx.createOscillator();
-    const g = ctx.createGain();
-    o.type = 'sawtooth';
-    o.frequency.setValueAtTime(f0, t);
-    o.frequency.linearRampToValueAtTime(f1, t + dur);
+// Son « vieille cassette » : un peu sourd et légèrement saturé
+function lofi(out) {
+  const lp = ctx.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.frequency.value = 4800;
+  lp.connect(saturator(1.6)).connect(out);
+  return lp;
+}
 
-    if (vibrato) addVibrato(o, t, dur, vibrato[0], vibrato[1]);
+// Oscillateur avec enveloppe qui décroît (et glissando optionnel de f0 vers f1)
+function tone(t, out, { type = 'sine', f0, f1, dur = 0.3, vol = 1, jitter = 0.003, send = 0 }) {
+  const o = ctx.createOscillator();
+  const g = ctx.createGain();
+  const k = 1 + rand(jitter);
 
-    formants.forEach(([from, to, q]) => {
-      const bp = ctx.createBiquadFilter();
-      bp.type = 'bandpass';
-      bp.Q.value = q;
-      bp.frequency.setValueAtTime(from, t);
-      bp.frequency.linearRampToValueAtTime(to, t + dur);
-      o.connect(bp).connect(g);
-    });
+  o.type = type;
+  o.frequency.setValueAtTime(f0 * k, t);
+  if (f1) o.frequency.exponentialRampToValueAtTime(f1 * k, t + dur);
+  g.gain.setValueAtTime(vol, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  o.connect(g).connect(out);
+  if (send) wet(g, send);
+  o.start(t);
+  o.stop(t + dur + 0.02);
+}
 
+// Petit souffle de bruit filtré
+function burst(t, out, { type = 'highpass', freq = 7000, q = 1, dur = 0.05, vol = 1, attack = 0, send = 0 }) {
+  const s = ctx.createBufferSource();
+  const f = ctx.createBiquadFilter();
+  const g = ctx.createGain();
+
+  s.buffer = noiseBuf;
+  f.type = type;
+  f.frequency.value = jit(freq, 0.04);
+  f.Q.value = q;
+
+  if (attack > 0) {
     g.gain.setValueAtTime(0.001, t);
     g.gain.linearRampToValueAtTime(vol, t + attack);
-    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-    g.connect(out);
+  } else {
+    g.gain.setValueAtTime(vol, t);
+  }
+  g.gain.exponentialRampToValueAtTime(0.001, t + dur);
 
-    o.start(t);
-    o.stop(t + dur + 0.05);
+  s.connect(f).connect(g).connect(out);
+  if (send) wet(g, send);
+
+  // Chaque coup démarre à un endroit différent du bruit
+  s.start(t, Math.random() * Math.max(0, 2 - dur - 0.05));
+  s.stop(t + dur + 0.02);
+}
+
+// Bruit dont le filtre glisse de f0 vers f1 (montée si up, sinon descente)
+function sweepNoise(t, out, { f0, f1, dur = 0.5, q = 2, vol = 0.5, up = false }) {
+  const s = ctx.createBufferSource();
+  const f = ctx.createBiquadFilter();
+  const g = ctx.createGain();
+
+  s.buffer = noiseBuf;
+  s.loop = true;
+  f.type = 'bandpass';
+  f.Q.value = q;
+  f.frequency.setValueAtTime(f0, t);
+  f.frequency.exponentialRampToValueAtTime(f1, t + dur);
+
+  if (up) {
+    g.gain.setValueAtTime(0.01, t);
+    g.gain.exponentialRampToValueAtTime(vol, t + dur);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dur + 0.05);
+  } else {
+    g.gain.setValueAtTime(vol, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
   }
 
-  /* ---------- Sons ---------- */
+  s.connect(f).connect(g).connect(out);
+  s.start(t);
+  s.stop(t + dur + 0.1);
+}
 
-  const SOUNDS = {
-    /* ----- Classique ----- */
+// Plusieurs notes jouées ensemble, avec filtre qui se ferme et voix dédoublées (spread, en cents)
+function chord(t, out, freqs, { type = 'sawtooth', cutoff = 2000, cutoffEnd = cutoff, dur = 0.3, vol = 0.3, spread = 0, send = 0, attack = 0.005 }) {
+  const lp = ctx.createBiquadFilter();
+  const g = ctx.createGain();
+  const voices = spread ? [-spread, spread] : [0];
+  const count = freqs.length * voices.length;
 
-    kick(t, out, f, v = 1) {
-      tone(t, out, { type: 'sine', f0: 150, f1: 42, dur: 0.45, vol: v });
-    },
+  lp.type = 'lowpass';
+  lp.frequency.setValueAtTime(cutoff, t);
+  if (cutoffEnd !== cutoff) lp.frequency.exponentialRampToValueAtTime(cutoffEnd, t + dur);
 
-    snare(t, out, f, v = 1) {
-      tone(t, out, { type: 'triangle', f0: 200, f1: 120, dur: 0.15, vol: 0.6 * v });
-      burst(t, out, { type: 'highpass', freq: 1800, dur: 0.2, vol: 0.8 * v });
-    },
+  g.gain.setValueAtTime(0.001, t);
+  g.gain.linearRampToValueAtTime(vol / Math.sqrt(count), t + attack);
+  g.gain.exponentialRampToValueAtTime(0.001, t + dur);
 
-    clap(t, out, f, v = 1) {
-      for (let i = 0; i < 3; i++) {
-        burst(t + i * 0.012, out, { type: 'bandpass', freq: 1500, q: 1, dur: 0.02, vol: 0.7 * v });
-      }
-      burst(t + 0.036, out, { type: 'bandpass', freq: 1500, q: 1, dur: 0.15, vol: 0.8 * v });
-    },
+  lp.connect(g).connect(out);
+  if (send) wet(g, send);
 
-    hat(t, out, f, v = 1) {
-      burst(t, out, { type: 'highpass', freq: 8000, dur: 0.05, vol: 0.5 * v });
-    },
-
-    openhat(t, out, f, v = 1) {
-      burst(t, out, { type: 'highpass', freq: 7000, dur: 0.3, vol: 0.5 * v });
-    },
-
-    tom(t, out, f, v = 1) {
-      tone(t, out, { type: 'sine', f0: 220, f1: 110, dur: 0.3, vol: 0.9 * v });
-    },
-
-    rim(t, out, f, v = 1) {
-      tone(t, out, { type: 'square', f0: 800, dur: 0.04, vol: 0.3 * v });
-      burst(t, out, { type: 'bandpass', freq: 3000, dur: 0.03, vol: 0.4 * v });
-    },
-
-    cowbell(t, out, f, v = 1) {
-      tone(t, out, { type: 'square', f0: 540, dur: 0.3, vol: 0.25 * v });
-      tone(t, out, { type: 'square', f0: 800, dur: 0.3, vol: 0.25 * v });
-    },
-
-    bass(t, out, f = 55, v = 1) {
-      const lp = ctx.createBiquadFilter();
-      lp.type = 'lowpass';
-      lp.frequency.value = 500;
-      lp.connect(out);
-      tone(t, lp, { type: 'sawtooth', f0: f, dur: 0.4, vol: 0.5 * v });
-      tone(t, lp, { type: 'sine', f0: f, dur: 0.4, vol: 0.6 * v });
-    },
-
-    stab(t, out, f, v = 1) {
-      chord(t, out, [220, 277.2, 329.6], { cutoff: 1800, dur: 0.25, vol: 0.12 * v });
-    },
-
-    pluck(t, out, f = 659.3, v = 1) {
-      tone(t, out, { type: 'triangle', f0: f, dur: 0.25, vol: 0.35 * v });
-    },
-
-    laser(t, out, f, v = 1) {
-      tone(t, out, { type: 'sawtooth', f0: 1800, f1: 80, dur: 0.35, vol: 0.25 * v });
-    },
-
-    /* ----- Électro ----- */
-
-    kick808(t, out, f, v = 1) {
-      tone(t, out, { type: 'sine', f0: 120, f1: 38, dur: 0.9, vol: v });
-    },
-
-    snare2(t, out, f, v = 1) {
-      tone(t, out, { type: 'triangle', f0: 330, f1: 180, dur: 0.12, vol: 0.5 * v });
-      burst(t, out, { type: 'highpass', freq: 2500, dur: 0.25, vol: 0.9 * v });
-    },
-
-    clap2(t, out, f, v = 1) {
-      for (let i = 0; i < 4; i++) {
-        burst(t + i * 0.01, out, { type: 'bandpass', freq: 1200, q: 0.8, dur: 0.02, vol: 0.6 * v });
-      }
-      burst(t + 0.04, out, { type: 'bandpass', freq: 1200, q: 0.8, dur: 0.3, vol: 0.7 * v });
-    },
-
-    hat909(t, out, f, v = 1) {
-      const hp = ctx.createBiquadFilter();
-      hp.type = 'highpass';
-      hp.frequency.value = 7000;
-      hp.connect(out);
-      [2093, 3136, 3520, 4186, 5920].forEach((fr) => {
-        tone(t, hp, { type: 'square', f0: fr, dur: 0.06, vol: 0.05 * v });
-      });
-    },
-
-    rimshot(t, out, f, v = 1) {
-      tone(t, out, { type: 'square', f0: 1700, dur: 0.02, vol: 0.3 * v });
-      tone(t, out, { type: 'square', f0: 480, dur: 0.03, vol: 0.3 * v });
-      burst(t, out, { type: 'bandpass', freq: 2500, dur: 0.03, vol: 0.4 * v });
-    },
-
-    conga(t, out, f, v = 1) {
-      tone(t, out, { type: 'sine', f0: 330, f1: 240, dur: 0.22, vol: 0.8 * v });
-      burst(t, out, { type: 'bandpass', freq: 1800, dur: 0.01, vol: 0.2 * v });
-    },
-
-    shaker(t, out, f, v = 1) {
-      burst(t, out, { type: 'bandpass', freq: 6500, q: 1.5, dur: 0.09, vol: 0.45 * v });
-    },
-
-    tambo(t, out, f, v = 1) {
-      burst(t, out, { type: 'highpass', freq: 4000, dur: 0.18, vol: 0.35 * v });
-      burst(t, out, { type: 'bandpass', freq: 9000, dur: 0.1, vol: 0.25 * v });
-    },
-
-    sub(t, out, f = 41.2, v = 1) {
-      tone(t, out, { type: 'sine', f0: f, dur: 0.8, vol: 0.9 * v });
-    },
-
-    supersaw(t, out, f = 220, v = 1) {
-      const notes = [f, f * 1.5, f * 2].flatMap((fr) => [fr * 0.994, fr, fr * 1.006]);
-      chord(t, out, notes, { cutoff: 3500, dur: 0.5, vol: 0.05 * v });
-    },
-
-    acid(t, out, f = 110, v = 1) {
+  freqs.forEach((fr) => {
+    voices.forEach((cents) => {
       const o = ctx.createOscillator();
-      const lp = ctx.createBiquadFilter();
-      const g = ctx.createGain();
-      o.type = 'sawtooth';
-      o.frequency.value = f;
-      lp.type = 'lowpass';
-      lp.Q.value = 14;
-      lp.frequency.setValueAtTime(1800, t);
-      lp.frequency.exponentialRampToValueAtTime(200, t + 0.25);
-      g.gain.setValueAtTime(0.4 * v, t);
-      g.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
-      o.connect(lp).connect(g).connect(out);
+      o.type = type;
+      o.frequency.value = jit(fr, 0.002);
+      o.detune.value = cents + rand(3);
+      o.connect(lp);
       o.start(t);
-      o.stop(t + 0.32);
-    },
+      o.stop(t + dur + 0.02);
+    });
+  });
+}
 
-    zap(t, out, f, v = 1) {
-      tone(t, out, { type: 'square', f0: 1200, f1: 100, dur: 0.15, vol: 0.2 * v });
-      tone(t, out, { type: 'sawtooth', f0: 2400, f1: 200, dur: 0.1, vol: 0.15 * v });
-    },
+// Petit tremblement de la hauteur d'un oscillateur (vibrato)
+function addVibrato(osc, t, dur, rate, depth) {
+  const lfo = ctx.createOscillator();
+  const amount = ctx.createGain();
+  lfo.frequency.value = rate;
+  amount.gain.value = depth;
+  lfo.connect(amount).connect(osc.frequency);
+  lfo.start(t);
+  lfo.stop(t + dur + 0.05);
+}
 
-    /* ----- Lo-fi ----- */
+// Son électrique de type piano ou cloche : une onde en module une autre
+function fm(t, out, { f, ratio = 1, index = 2, dur = 1, vol = 0.2, modDecay = 0.4, send = 0 }) {
+  const car = ctx.createOscillator();
+  const mod = ctx.createOscillator();
+  const modGain = ctx.createGain();
+  const g = ctx.createGain();
+  const fr = jit(f, 0.002);
 
-    boombap(t, out, f, v = 1) {
-      tone(t, out, { type: 'sine', f0: 110, f1: 48, dur: 0.35, vol: v });
-      burst(t, out, { type: 'lowpass', freq: 800, dur: 0.02, vol: 0.3 * v });
-    },
+  car.frequency.value = fr;
+  mod.frequency.value = fr * ratio;
+  modGain.gain.setValueAtTime(fr * index, t);
+  modGain.gain.exponentialRampToValueAtTime(fr * 0.05, t + dur * modDecay);
 
-    snap(t, out, f, v = 1) {
-      burst(t, out, { type: 'bandpass', freq: 2200, q: 2, dur: 0.07, vol: 0.7 * v });
-      tone(t, out, { type: 'triangle', f0: 1300, dur: 0.03, vol: 0.15 * v });
-    },
+  g.gain.setValueAtTime(0.001, t);
+  g.gain.linearRampToValueAtTime(vol, t + 0.004);
+  g.gain.exponentialRampToValueAtTime(0.001, t + dur);
 
-    rimlofi(t, out, f, v = 1) {
-      tone(t, out, { type: 'triangle', f0: 600, dur: 0.05, vol: 0.35 * v });
-      burst(t, out, { type: 'bandpass', freq: 1800, dur: 0.03, vol: 0.3 * v });
-    },
+  mod.connect(modGain).connect(car.frequency);
+  car.connect(g).connect(out);
+  if (send) wet(g, send);
 
-    hatlofi(t, out, f, v = 1) {
-      burst(t, out, { type: 'highpass', freq: 5500, dur: 0.045, vol: 0.35 * v });
-    },
+  car.start(t);
+  mod.start(t);
+  car.stop(t + dur + 0.05);
+  mod.stop(t + dur + 0.05);
+}
 
-    vinylpop(t, out, f, v = 1) {
-      burst(t, out, { type: 'lowpass', freq: 1200, dur: 0.03, vol: 0.5 * v });
-      burst(t, out, { type: 'highpass', freq: 3000, dur: 0.02, vol: 0.2 * v });
-    },
+// Source de voix : une onde douce, riche en harmoniques graves comme les cordes vocales
+let glottal = null;
 
-    bongo(t, out, f, v = 1) {
-      tone(t, out, { type: 'sine', f0: 420, f1: 330, dur: 0.14, vol: 0.7 * v });
-    },
+function glottalWave() {
+  if (!glottal) {
+    const n = 32;
+    const real = new Float32Array(n);
+    const imag = new Float32Array(n);
 
-    wood(t, out, f, v = 1) {
-      tone(t, out, { type: 'triangle', f0: 880, dur: 0.08, vol: 0.4 * v });
-      tone(t, out, { type: 'sine', f0: 1320, dur: 0.04, vol: 0.15 * v });
-    },
+    for (let k = 1; k < n; k++) imag[k] = 1 / (k * k);
+    glottal = ctx.createPeriodicWave(real, imag);
+  }
+  return glottal;
+}
 
-    bell(t, out, f = 880, v = 1) {
-      tone(t, out, { type: 'sine', f0: f, dur: 1.0, vol: 0.25 * v });
-      tone(t, out, { type: 'sine', f0: f * 1.5, dur: 0.8, vol: 0.15 * v });
-      tone(t, out, { type: 'sine', f0: f * 2.52, dur: 0.5, vol: 0.08 * v });
-    },
+// Voix synthétique : la source passe par des filtres qui imitent les voyelles.
+// formants : [[début, fin, netteté, volume], ...] en Hz, vibrato : [vitesse, profondeur]
+function vowel(t, out, { f0, f1 = f0, formants, dur = 0.3, vol = 1, attack = 0.02, vibrato = null, breath = 0.1, send = 0 }) {
+  const o = ctx.createOscillator();
+  const src = ctx.createGain();
+  const g = ctx.createGain();
 
-    rhodes(t, out, f, v = 1) {
-      chord(t, out, [261.6, 329.6, 392, 493.9], { type: 'sine', cutoff: 2500, dur: 0.9, vol: 0.11 * v });
-      chord(t, out, [523.2, 659.2], { type: 'sine', cutoff: 2500, dur: 0.5, vol: 0.03 * v });
-    },
+  o.setPeriodicWave(glottalWave());
+  o.frequency.setValueAtTime(jit(f0, 0.01), t);
+  o.frequency.linearRampToValueAtTime(jit(f1, 0.01), t + dur);
+  if (vibrato) addVibrato(o, t, dur, vibrato[0], vibrato[1]);
+  o.connect(src);
 
-    fatbass(t, out, f = 55, v = 1) {
-      const lp = ctx.createBiquadFilter();
-      lp.type = 'lowpass';
-      lp.frequency.value = 260;
-      lp.connect(out);
-      tone(t, lp, { type: 'sawtooth', f0: f, dur: 0.5, vol: 0.5 * v });
-      tone(t, lp, { type: 'sawtooth', f0: f * 1.005, dur: 0.5, vol: 0.4 * v });
-    },
+  // Un peu de souffle mélangé à la voix, comme dans une vraie voix
+  if (breath) {
+    const n = ctx.createBufferSource();
+    const ng = ctx.createGain();
+    n.buffer = noiseBuf;
+    n.loop = true;
+    ng.gain.value = breath;
+    n.connect(ng).connect(src);
+    n.start(t);
+    n.stop(t + dur + 0.05);
+  }
 
-    scratch(t, out, f, v = 1) {
-      sweepNoise(t, out, { f0: 600, f1: 2400, dur: 0.12, q: 6, vol: 0.5 * v });
-      sweepNoise(t + 0.12, out, { f0: 2400, f1: 500, dur: 0.14, q: 6, vol: 0.5 * v });
-    },
+  formants.forEach(([from, to, q, amp = 1]) => {
+    const bp = ctx.createBiquadFilter();
+    const fg = ctx.createGain();
+    bp.type = 'bandpass';
+    bp.Q.value = q;
+    bp.frequency.setValueAtTime(from, t);
+    bp.frequency.linearRampToValueAtTime(to, t + dur);
+    fg.gain.value = amp;
+    src.connect(bp).connect(fg).connect(g);
+  });
 
-    chop(t, out, f = 196, v = 1) {
-      const bp = ctx.createBiquadFilter();
-      bp.type = 'bandpass';
-      bp.frequency.value = 900;
-      bp.Q.value = 3;
-      bp.connect(out);
-      tone(t, bp, { type: 'sawtooth', f0: f, dur: 0.22, vol: 0.4 * v });
-    },
+  g.gain.setValueAtTime(0.001, t);
+  g.gain.linearRampToValueAtTime(vol, t + attack);
+  g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  g.connect(out);
+  if (send) wet(g, send);
 
-    /* ----- FX ----- */
+  o.start(t);
+  o.stop(t + dur + 0.05);
+}
 
-    riser(t, out, f, v = 1) {
-      sweepNoise(t, out, { f0: 300, f1: 7000, dur: 1.4, q: 2, vol: 0.5 * v, up: true });
-    },
+// Un mouvement de scratch : la hauteur et la brillance suivent la vitesse du disque,
+// et la coupure du fader rend le début et la fin nets
+function scratchCut(t, out, { dur, from, to, vol = 1, base = 140 }) {
+  const o = ctx.createOscillator();
+  const g = ctx.createGain();
 
-    impact(t, out, f, v = 1) {
-      tone(t, out, { type: 'sine', f0: 90, f1: 28, dur: 1.2, vol: v });
-      burst(t, out, { type: 'lowpass', freq: 600, dur: 1.2, vol: 0.6 * v });
-    },
+  o.setPeriodicWave(glottalWave());
+  o.frequency.setValueAtTime(base * from, t);
+  o.frequency.exponentialRampToValueAtTime(base * to, t + dur);
 
-    siren(t, out, f, v = 1) {
-      const o = ctx.createOscillator();
-      const g = ctx.createGain();
-      o.type = 'sine';
-      o.frequency.setValueAtTime(600, t);
-      o.frequency.linearRampToValueAtTime(1000, t + 0.4);
-      o.frequency.linearRampToValueAtTime(600, t + 0.8);
-      g.gain.setValueAtTime(0.2 * v, t);
-      g.gain.exponentialRampToValueAtTime(0.001, t + 0.85);
-      o.connect(g).connect(out);
-      o.start(t);
-      o.stop(t + 0.9);
-    },
+  [[750, 7], [1250, 9], [2600, 6]].forEach(([fr, q]) => {
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.Q.value = q;
+    bp.frequency.setValueAtTime(fr * from, t);
+    bp.frequency.exponentialRampToValueAtTime(fr * to, t + dur);
+    o.connect(bp).connect(g);
+  });
 
-    glitch(t, out, f, v = 1) {
-      for (let k = 0; k < 6; k++) {
-        tone(t + k * 0.03, out, { type: 'square', f0: 200 + k * 250, dur: 0.03, vol: 0.1 * v });
-      }
-    },
+  g.gain.setValueAtTime(0.001, t);
+  g.gain.exponentialRampToValueAtTime(vol, t + 0.01);
+  g.gain.setValueAtTime(vol, t + dur - 0.02);
+  g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  g.connect(out);
+  wet(g, 0.06);
 
-    bubble(t, out, f, v = 1) {
-      tone(t, out, { type: 'sine', f0: 300, f1: 900, dur: 0.12, vol: 0.35 * v });
-    },
+  o.start(t);
+  o.stop(t + dur + 0.02);
 
-    coin(t, out, f, v = 1) {
-      tone(t, out, { type: 'square', f0: 988, dur: 0.08, vol: 0.15 * v });
-      tone(t + 0.08, out, { type: 'square', f0: 1319, dur: 0.35, vol: 0.15 * v });
-    },
+  // Bruit du sillon du disque
+  sweepNoise(t, out, { f0: 1800 * from, f1: 1800 * to, dur, q: 3, vol: 0.12 * vol });
+}
 
-    drop(t, out, f, v = 1) {
-      tone(t, out, { type: 'sine', f0: 400, f1: 40, dur: 0.7, vol: 0.8 * v });
-    },
+/* ---------- Batterie : coups réutilisés par plusieurs sons ---------- */
 
-    whoosh(t, out, f, v = 1) {
-      sweepNoise(t, out, { f0: 400, f1: 3000, dur: 0.5, q: 1, vol: 0.5 * v, up: true });
-    },
+// Les six ondes carrées d'une vraie boîte à rythmes : ça donne le côté métallique
+const METAL = [205.3, 304.4, 369.6, 522.7, 540, 800];
 
-    marimba(t, out, f = 523.3, v = 1) {
-      tone(t, out, { type: 'sine', f0: f, dur: 0.35, vol: 0.5 * v });
-      tone(t, out, { type: 'sine', f0: f * 4, dur: 0.1, vol: 0.15 * v });
-    },
+function metal(t, out, { dur = 0.05, vol = 0.5, hp = 7000, peak = 10000, send = 0 }) {
+  const hpf = ctx.createBiquadFilter();
+  const bpf = ctx.createBiquadFilter();
+  const g = ctx.createGain();
 
-    kalimba(t, out, f = 784, v = 1) {
-      tone(t, out, { type: 'sine', f0: f, dur: 0.6, vol: 0.4 * v });
-      tone(t, out, { type: 'sine', f0: f * 2.76, dur: 0.15, vol: 0.12 * v });
-    },
+  hpf.type = 'highpass';
+  hpf.frequency.value = hp;
+  bpf.type = 'bandpass';
+  bpf.frequency.value = peak;
+  bpf.Q.value = 0.7;
 
-    gong(t, out, f, v = 1) {
-      [110, 150.4, 222, 334].forEach((fr) => {
-        tone(t, out, { type: 'sine', f0: fr, dur: 2, vol: 0.13 * v });
+  g.gain.setValueAtTime(vol, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  hpf.connect(bpf).connect(g).connect(out);
+  if (send) wet(g, send);
+
+  METAL.forEach((fr) => {
+    const o = ctx.createOscillator();
+    o.type = 'square';
+    o.frequency.value = jit(fr, 0.01);
+    o.connect(hpf);
+    o.start(t);
+    o.stop(t + dur + 0.02);
+  });
+}
+
+// Grosse caisse : le corps plonge vite en hauteur, avec le claquement de la peau au début
+function kickHit(t, out, v = 1, { body = 150, end = 45, dur = 0.5, drive = 2.5 } = {}) {
+  const o = ctx.createOscillator();
+  const g = ctx.createGain();
+
+  o.type = 'sine';
+  o.frequency.setValueAtTime(jit(body, 0.02), t);
+  o.frequency.exponentialRampToValueAtTime(end * 1.6, t + 0.05);
+  o.frequency.exponentialRampToValueAtTime(end, t + dur * 0.8);
+  g.gain.setValueAtTime(v, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  o.connect(g).connect(saturator(drive)).connect(out);
+  o.start(t);
+  o.stop(t + dur + 0.02);
+
+  burst(t, out, { type: 'bandpass', freq: 3500, q: 1, dur: 0.012, vol: 0.35 * v });
+  tone(t, out, { type: 'triangle', f0: 320, f1: 90, dur: 0.03, vol: 0.3 * v, jitter: 0.02 });
+}
+
+// Caisse claire : le fût (deux notes), le choc de la baguette et le frottement du timbre
+function snareHit(t, out, v = 1, { pitch = 1, snap = 1, send = 0.18 } = {}) {
+  tone(t, out, { type: 'triangle', f0: 190 * pitch, f1: 150 * pitch, dur: 0.12, vol: 0.5 * v, jitter: 0.02 });
+  tone(t, out, { type: 'sine', f0: 330 * pitch, f1: 250 * pitch, dur: 0.07, vol: 0.3 * v, jitter: 0.02 });
+  burst(t, out, { type: 'bandpass', freq: 2200, q: 0.7, dur: 0.2, vol: 0.55 * v * snap, send });
+  burst(t, out, { type: 'highpass', freq: 5000, dur: 0.12, vol: 0.3 * v * snap });
+}
+
+// Claquement de mains : plusieurs frappes très rapprochées, puis la résonance de la pièce
+function clapHit(t, out, v = 1, { tail = 0.18, send = 0.3 } = {}) {
+  let at = 0;
+
+  for (let i = 0; i < 4; i++) {
+    burst(t + at, out, {
+      type: 'bandpass',
+      freq: 1100,
+      q: 1.1,
+      dur: 0.012 + Math.random() * 0.006,
+      vol: (0.5 + Math.random() * 0.2) * v
+    });
+    at += 0.008 + Math.random() * 0.008;
+  }
+
+  burst(t + at, out, { type: 'bandpass', freq: 1250, q: 0.9, dur: tail, vol: 0.7 * v, send });
+}
+
+// Charleston fermé ou ouvert
+function hatHit(t, out, v = 1, open = false) {
+  metal(t, out, {
+    dur: open ? 0.38 : 0.06,
+    vol: (open ? 0.4 : 0.45) * v,
+    hp: 7200,
+    peak: 10500,
+    send: open ? 0.08 : 0
+  });
+  burst(t, out, { type: 'highpass', freq: 9000, dur: open ? 0.3 : 0.04, vol: 0.12 * v });
+}
+
+/* ---------- Sons ---------- */
+
+const SOUNDS = {
+  /* ----- Classique ----- */
+
+  kick(t, out, f, v = 1) {
+    kickHit(t, out, v);
+  },
+
+  snare(t, out, f, v = 1) {
+    snareHit(t, out, v);
+  },
+
+  clap(t, out, f, v = 1) {
+    clapHit(t, out, v);
+  },
+
+  hat(t, out, f, v = 1) {
+    hatHit(t, out, v, false);
+  },
+
+  openhat(t, out, f, v = 1) {
+    hatHit(t, out, v, true);
+  },
+
+  tom(t, out, f, v = 1) {
+    tone(t, out, { type: 'sine', f0: 230, f1: 105, dur: 0.38, vol: 0.9 * v, jitter: 0.02, send: 0.1 });
+    tone(t, out, { type: 'triangle', f0: 460, f1: 210, dur: 0.12, vol: 0.25 * v, jitter: 0.02 });
+    burst(t, out, { type: 'bandpass', freq: 1800, q: 1, dur: 0.015, vol: 0.25 * v });
+  },
+
+  rim(t, out, f, v = 1) {
+    tone(t, out, { type: 'triangle', f0: 1750, dur: 0.025, vol: 0.25 * v, jitter: 0.02 });
+    tone(t, out, { type: 'square', f0: 520, dur: 0.04, vol: 0.25 * v, jitter: 0.02 });
+    burst(t, out, { type: 'bandpass', freq: 3200, q: 1.2, dur: 0.03, vol: 0.4 * v, send: 0.08 });
+  },
+
+  cowbell(t, out, f, v = 1) {
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 1000;
+    bp.Q.value = 1.5;
+    bp.connect(out);
+
+    tone(t, bp, { type: 'square', f0: 540, dur: 0.35, vol: 0.55 * v, jitter: 0.005 });
+    tone(t, bp, { type: 'square', f0: 800, dur: 0.35, vol: 0.55 * v, jitter: 0.005 });
+    burst(t, out, { type: 'highpass', freq: 5000, dur: 0.01, vol: 0.15 * v });
+  },
+
+  bass(t, out, f = 55, v = 1) {
+    const o = ctx.createOscillator();
+    const lp = ctx.createBiquadFilter();
+    const g = ctx.createGain();
+
+    o.type = 'sawtooth';
+    o.frequency.value = jit(f, 0.002);
+    lp.type = 'lowpass';
+    lp.Q.value = 4;
+    lp.frequency.setValueAtTime(1100, t);
+    lp.frequency.exponentialRampToValueAtTime(220, t + 0.25);
+    g.gain.setValueAtTime(0.5 * v, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
+
+    o.connect(lp).connect(saturator(2)).connect(g).connect(out);
+    o.start(t);
+    o.stop(t + 0.47);
+
+    tone(t, out, { type: 'sine', f0: f, dur: 0.45, vol: 0.55 * v });
+  },
+
+  stab(t, out, f, v = 1) {
+    chord(t, out, [220, 277.2, 329.6], { cutoff: 3200, cutoffEnd: 700, dur: 0.28, vol: 0.45 * v, spread: 8, send: 0.15 });
+  },
+
+  pluck(t, out, f = 659.3, v = 1) {
+    chord(t, out, [f], { cutoff: 4200, cutoffEnd: 500, dur: 0.3, vol: 0.4 * v, spread: 6, send: 0.12 });
+  },
+
+  laser(t, out, f, v = 1) {
+    tone(t, out, { type: 'sawtooth', f0: 1800, f1: 80, dur: 0.35, vol: 0.25 * v, send: 0.15 });
+    tone(t, out, { type: 'square', f0: 900, f1: 60, dur: 0.3, vol: 0.1 * v });
+  },
+
+  /* ----- Électro ----- */
+
+  kick808(t, out, f, v = 1) {
+    kickHit(t, out, v, { body: 125, end: 38, dur: 1.0, drive: 3.2 });
+  },
+
+  snare2(t, out, f, v = 1) {
+    snareHit(t, out, v, { pitch: 1.35, snap: 1.3, send: 0.25 });
+  },
+
+  clap2(t, out, f, v = 1) {
+    clapHit(t, out, v, { tail: 0.3, send: 0.45 });
+  },
+
+  hat909(t, out, f, v = 1) {
+    metal(t, out, { dur: 0.07, vol: 0.45 * v, hp: 6000, peak: 9000 });
+    burst(t, out, { type: 'highpass', freq: 8500, dur: 0.05, vol: 0.12 * v });
+  },
+
+  rimshot(t, out, f, v = 1) {
+    tone(t, out, { type: 'square', f0: 1700, dur: 0.02, vol: 0.3 * v, jitter: 0.02 });
+    tone(t, out, { type: 'square', f0: 480, dur: 0.03, vol: 0.3 * v, jitter: 0.02 });
+    burst(t, out, { type: 'bandpass', freq: 2500, dur: 0.03, vol: 0.4 * v, send: 0.1 });
+  },
+
+  conga(t, out, f, v = 1) {
+    tone(t, out, { type: 'sine', f0: 340, f1: 250, dur: 0.25, vol: 0.8 * v, jitter: 0.02, send: 0.08 });
+    tone(t, out, { type: 'triangle', f0: 700, f1: 400, dur: 0.05, vol: 0.25 * v, jitter: 0.02 });
+    burst(t, out, { type: 'bandpass', freq: 2000, dur: 0.012, vol: 0.25 * v });
+  },
+
+  shaker(t, out, f, v = 1) {
+    burst(t, out, { type: 'bandpass', freq: 6500, q: 1.5, attack: 0.012, dur: 0.09, vol: 0.5 * v });
+  },
+
+  tambo(t, out, f, v = 1) {
+    metal(t, out, { dur: 0.25, vol: 0.3 * v, hp: 3500, peak: 7000 });
+    burst(t, out, { type: 'highpass', freq: 4500, attack: 0.004, dur: 0.2, vol: 0.3 * v });
+  },
+
+  sub(t, out, f = 41.2, v = 1) {
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+
+    o.frequency.setValueAtTime(jit(f, 0.002), t);
+    g.gain.setValueAtTime(0.001, t);
+    g.gain.linearRampToValueAtTime(0.8 * v, t + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.9);
+    o.connect(saturator(1.8)).connect(g).connect(out);
+    o.start(t);
+    o.stop(t + 0.92);
+  },
+
+  supersaw(t, out, f = 220, v = 1) {
+    chord(t, out, [f, f * 1.5, f * 2], { cutoff: 4200, cutoffEnd: 1400, dur: 0.55, vol: 0.5 * v, spread: 14, send: 0.15 });
+  },
+
+  acid(t, out, f = 110, v = 1) {
+    const o = ctx.createOscillator();
+    const lp = ctx.createBiquadFilter();
+    const g = ctx.createGain();
+
+    o.type = 'sawtooth';
+    o.frequency.value = jit(f, 0.002);
+    lp.type = 'lowpass';
+    lp.Q.value = 14;
+    lp.frequency.setValueAtTime(1800, t);
+    lp.frequency.exponentialRampToValueAtTime(200, t + 0.25);
+    g.gain.setValueAtTime(0.4 * v, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+
+    o.connect(lp).connect(saturator(2.5)).connect(g).connect(out);
+    o.start(t);
+    o.stop(t + 0.32);
+  },
+
+  zap(t, out, f, v = 1) {
+    tone(t, out, { type: 'square', f0: 1200, f1: 100, dur: 0.15, vol: 0.2 * v, send: 0.12 });
+    tone(t, out, { type: 'sawtooth', f0: 2400, f1: 200, dur: 0.1, vol: 0.15 * v });
+  },
+
+  /* ----- Lo-fi ----- */
+
+  boombap(t, out, f, v = 1) {
+    kickHit(t, lofi(out), v, { body: 108, end: 50, dur: 0.42, drive: 1.8 });
+  },
+
+  snap(t, out, f, v = 1) {
+    const o = lofi(out);
+    burst(t, o, { type: 'bandpass', freq: 2200, q: 2, dur: 0.08, vol: 0.7 * v, send: 0.1 });
+    tone(t, o, { type: 'triangle', f0: 1300, dur: 0.03, vol: 0.15 * v });
+  },
+
+  rimlofi(t, out, f, v = 1) {
+    const o = lofi(out);
+    tone(t, o, { type: 'triangle', f0: 600, dur: 0.06, vol: 0.4 * v, jitter: 0.02 });
+    burst(t, o, { type: 'bandpass', freq: 1800, dur: 0.03, vol: 0.3 * v });
+  },
+
+  hatlofi(t, out, f, v = 1) {
+    burst(t, lofi(out), { type: 'highpass', freq: 5000, dur: 0.05, vol: 0.4 * v });
+  },
+
+  // Craquement de vinyle : plein de minuscules claquements et un petit « pop »
+  vinylpop(t, out, f, v = 1) {
+    for (let k = 0; k < 5; k++) {
+      burst(t + Math.random() * 0.06, out, { type: 'highpass', freq: 2500, dur: 0.004, vol: 0.25 * v });
+    }
+    burst(t, out, { type: 'lowpass', freq: 900, dur: 0.035, vol: 0.45 * v });
+  },
+
+  bongo(t, out, f, v = 1) {
+    tone(t, out, { type: 'sine', f0: 430, f1: 320, dur: 0.16, vol: 0.75 * v, jitter: 0.02, send: 0.08 });
+    tone(t, out, { type: 'triangle', f0: 900, f1: 500, dur: 0.04, vol: 0.25 * v, jitter: 0.02 });
+    burst(t, out, { type: 'bandpass', freq: 2500, dur: 0.01, vol: 0.2 * v });
+  },
+
+  wood(t, out, f, v = 1) {
+    tone(t, out, { type: 'triangle', f0: 900, f1: 850, dur: 0.09, vol: 0.45 * v, jitter: 0.01, send: 0.1 });
+    tone(t, out, { type: 'sine', f0: 1350, dur: 0.05, vol: 0.15 * v, jitter: 0.01 });
+    burst(t, out, { type: 'bandpass', freq: 2800, dur: 0.008, vol: 0.2 * v });
+  },
+
+  bell(t, out, f = 880, v = 1) {
+    fm(t, out, { f, ratio: 3.5, index: 2.8, dur: 1.8, vol: 0.22 * v, modDecay: 0.3, send: 0.25 });
+  },
+
+  rhodes(t, out, f, v = 1) {
+    [261.6, 329.6, 392, 493.9].forEach((note, k) => {
+      fm(t + k * 0.012, out, { f: note, ratio: 1, index: 1.5, dur: 1.3, vol: 0.085 * v, modDecay: 0.25, send: 0.2 });
+    });
+  },
+
+  fatbass(t, out, f = 55, v = 1) {
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(700, t);
+    lp.frequency.exponentialRampToValueAtTime(180, t + 0.4);
+    lp.connect(saturator(2.2)).connect(out);
+
+    tone(t, lp, { type: 'sawtooth', f0: f, dur: 0.5, vol: 0.5 * v });
+    tone(t, lp, { type: 'sawtooth', f0: f * 1.006, dur: 0.5, vol: 0.4 * v });
+    tone(t, out, { type: 'sine', f0: f, dur: 0.5, vol: 0.45 * v });
+  },
+
+  scratch(t, out, f, v = 1) {
+    scratchCut(t, out, { dur: 0.12, from: 0.8, to: 2.4, vol: 1.4 * v, base: 170 });
+    scratchCut(t + 0.13, out, { dur: 0.14, from: 2.2, to: 0.7, vol: 1.0 * v, base: 170 });
+  },
+
+  // Petit extrait de voix « oh »
+  chop(t, out, f = 196, v = 1) {
+    vowel(t, out, {
+      f0: f,
+      f1: f * 0.97,
+      formants: [[520, 480, 8, 1], [920, 880, 10, 0.7], [2500, 2500, 10, 0.3]],
+      dur: 0.22,
+      vol: 1.8 * v,
+      attack: 0.01,
+      breath: 0.1,
+      send: 0.1
+    });
+  },
+
+  /* ----- FX ----- */
+
+  riser(t, out, f, v = 1) {
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(150, t);
+    o.frequency.exponentialRampToValueAtTime(1800, t + 1.5);
+    g.gain.setValueAtTime(0.001, t);
+    g.gain.exponentialRampToValueAtTime(0.1 * v, t + 1.4);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 1.5);
+    o.connect(g).connect(out);
+    wet(g, 0.2);
+    o.start(t);
+    o.stop(t + 1.52);
+
+    sweepNoise(t, out, { f0: 300, f1: 8000, dur: 1.5, q: 2, vol: 0.4 * v, up: true });
+  },
+
+  impact(t, out, f, v = 1) {
+    kickHit(t, out, v, { body: 90, end: 26, dur: 1.3, drive: 2 });
+    burst(t, out, { type: 'lowpass', freq: 700, dur: 1.3, vol: 0.6 * v, send: 0.45 });
+    burst(t, out, { type: 'highpass', freq: 3000, dur: 0.3, vol: 0.25 * v, send: 0.5 });
+  },
+
+  siren(t, out, f, v = 1) {
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+
+    o.type = 'sine';
+    o.frequency.setValueAtTime(600, t);
+    o.frequency.linearRampToValueAtTime(1000, t + 0.4);
+    o.frequency.linearRampToValueAtTime(600, t + 0.8);
+    g.gain.setValueAtTime(0.2 * v, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.85);
+    o.connect(g).connect(out);
+    wet(g, 0.15);
+    o.start(t);
+    o.stop(t + 0.9);
+  },
+
+  glitch(t, out, f, v = 1) {
+    for (let k = 0; k < 8; k++) {
+      const freq = 200 + Math.floor(Math.random() * 8) * 260;
+      tone(t + k * 0.025, out, { type: 'square', f0: freq, dur: 0.025, vol: 0.1 * v, jitter: 0 });
+    }
+    burst(t, out, { type: 'highpass', freq: 6000, dur: 0.2, vol: 0.1 * v });
+  },
+
+  bubble(t, out, f, v = 1) {
+    tone(t, out, { type: 'sine', f0: 280, f1: 950, dur: 0.1, vol: 0.35 * v, jitter: 0.03, send: 0.12 });
+    tone(t, out, { type: 'sine', f0: 560, f1: 1900, dur: 0.1, vol: 0.1 * v, jitter: 0.03 });
+  },
+
+  coin(t, out, f, v = 1) {
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 4200;
+    lp.connect(out);
+
+    tone(t, lp, { type: 'square', f0: 988, dur: 0.08, vol: 0.16 * v, jitter: 0 });
+    tone(t + 0.08, lp, { type: 'square', f0: 1319, dur: 0.38, vol: 0.16 * v, jitter: 0, send: 0.15 });
+  },
+
+  drop(t, out, f, v = 1) {
+    tone(t, out, { type: 'sine', f0: 420, f1: 38, dur: 0.75, vol: 0.85 * v, send: 0.1 });
+    burst(t, out, { type: 'lowpass', freq: 400, dur: 0.2, vol: 0.3 * v });
+  },
+
+  whoosh(t, out, f, v = 1) {
+    sweepNoise(t, out, { f0: 400, f1: 3500, dur: 0.55, q: 1, vol: 0.5 * v, up: true });
+    sweepNoise(t, out, { f0: 900, f1: 6000, dur: 0.55, q: 2, vol: 0.2 * v, up: true });
+  },
+
+  marimba(t, out, f = 523.3, v = 1) {
+    fm(t, out, { f, ratio: 4, index: 0.6, dur: 0.55, vol: 0.45 * v, modDecay: 0.12, send: 0.1 });
+    burst(t, out, { type: 'bandpass', freq: f * 2, q: 2, dur: 0.01, vol: 0.15 * v });
+  },
+
+  kalimba(t, out, f = 784, v = 1) {
+    fm(t, out, { f, ratio: 5.4, index: 0.35, dur: 0.9, vol: 0.4 * v, modDecay: 0.1, send: 0.15 });
+    burst(t, out, { type: 'bandpass', freq: 3500, q: 2, dur: 0.008, vol: 0.18 * v });
+  },
+
+  // Gong : beaucoup de notes qui ne s'accordent pas, chacune s'éteignant à son rythme
+  gong(t, out, f, v = 1) {
+    [110, 150.4, 183, 247, 297, 372, 468, 531].forEach((fr) => {
+      tone(t, out, { type: 'sine', f0: fr, dur: 1.2 + Math.random() * 2, vol: 0.07 * v, jitter: 0.004, send: 0.35 });
+    });
+    burst(t, out, { type: 'bandpass', freq: 800, q: 0.8, attack: 0.02, dur: 0.4, vol: 0.2 * v, send: 0.3 });
+  },
+
+  choir(t, out, f = 196, v = 1) {
+    [f, f * 1.26, f * 1.5].forEach((fr, k) => {
+      vowel(t, out, {
+        f0: fr,
+        formants: [[800, 800, 6, 1], [1150, 1150, 8, 0.6], [2900, 2900, 10, 0.25]],
+        dur: 0.95,
+        vol: 1.0 * v,
+        attack: 0.22,
+        vibrato: [5, 3 + k],
+        breath: 0.06,
+        send: 0.3
       });
-    },
+    });
+  },
 
-    choir(t, out, f = 196, v = 1) {
-      const bp = ctx.createBiquadFilter();
-      const g = ctx.createGain();
-      bp.type = 'bandpass';
-      bp.frequency.value = 900;
-      bp.Q.value = 1.2;
-      g.gain.setValueAtTime(0.001, t);
-      g.gain.linearRampToValueAtTime(0.5 * v, t + 0.2);
-      g.gain.exponentialRampToValueAtTime(0.001, t + 0.9);
-      bp.connect(g).connect(out);
-      [f, f * 1.26, f * 1.5].forEach((fr, k) => {
-        tone(t, bp, { type: 'sawtooth', f0: fr * (1 + (k - 1) * 0.004), dur: 0.9, vol: 0.2 });
-      });
-    },
+  /* ----- DJ ----- */
 
-    /* ----- DJ ----- */
+  // Le klaxon : plusieurs cuivres qui montent en un instant, saturés comme un vrai
+  airhorn(t, out, f, v = 1) {
+    const pre = ctx.createGain();
+    const horn = ctx.createBiquadFilter();
+    const lp = ctx.createBiquadFilter();
+    const g = ctx.createGain();
 
-    // Le klaxon de DJ : plusieurs notes de cuivre qui montent en un instant
-    airhorn(t, out, f, v = 1) {
-      const lp = ctx.createBiquadFilter();
-      const g = ctx.createGain();
-      lp.type = 'lowpass';
-      lp.frequency.value = 3200;
-      g.gain.setValueAtTime(0.001, t);
-      g.gain.linearRampToValueAtTime(0.12 * v, t + 0.03);
-      g.gain.setValueAtTime(0.12 * v, t + 0.45);
-      g.gain.exponentialRampToValueAtTime(0.001, t + 0.75);
-      lp.connect(g).connect(out);
+    pre.gain.value = 0.18;
+    horn.type = 'peaking'; // résonance du pavillon
+    horn.frequency.value = 1100;
+    horn.Q.value = 1.2;
+    horn.gain.value = 9;
+    lp.type = 'lowpass';
+    lp.frequency.value = 5200;
 
-      [392, 494, 587, 784].forEach((fr, k) => {
+    g.gain.setValueAtTime(0.001, t);
+    g.gain.linearRampToValueAtTime(0.28 * v, t + 0.025);
+    g.gain.setValueAtTime(0.28 * v, t + 0.5);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.82);
+
+    pre.connect(horn).connect(saturator(4)).connect(lp).connect(g).connect(out);
+    wet(g, 0.18);
+
+    [466, 588, 698, 933].forEach((fr) => {
+      [-9, 9].forEach((cents) => {
         const o = ctx.createOscillator();
-        o.type = 'sawtooth';
-        o.frequency.setValueAtTime(fr * 0.93, t);
-        o.frequency.exponentialRampToValueAtTime(fr, t + 0.06);
-        o.detune.value = (k - 1.5) * 6;
-        o.connect(lp);
+        o.type = 'square';
+        o.frequency.setValueAtTime(fr * 0.94, t);
+        o.frequency.exponentialRampToValueAtTime(fr, t + 0.07);
+        o.detune.value = cents + rand(4);
+        o.connect(pre);
         o.start(t);
-        o.stop(t + 0.8);
+        o.stop(t + 0.85);
       });
-    },
+    });
 
-    // Le disque qu'on rembobine : la hauteur s'effondre
-    rewind(t, out, f, v = 1) {
-      tone(t, out, { type: 'sawtooth', f0: 1400, f1: 50, dur: 0.55, vol: 0.18 * v });
-      sweepNoise(t, out, { f0: 5000, f1: 250, dur: 0.55, q: 1.5, vol: 0.35 * v });
-    },
+    // Souffle de l'attaque
+    burst(t, out, { type: 'bandpass', freq: 2500, q: 0.8, dur: 0.06, vol: 0.12 * v });
+  },
 
-    // Un aller-retour de scratch
-    scratchbaby(t, out, f, v = 1) {
-      const o = ctx.createOscillator();
+  // Le disque qu'on freine : la hauteur s'effondre et le plateau tremble de plus en plus lentement
+  rewind(t, out, f, v = 1) {
+    const dur = 0.7;
+    const o = ctx.createOscillator();
+    const bp = ctx.createBiquadFilter();
+    const g = ctx.createGain();
+    const lfo = ctx.createOscillator();
+    const lfoGain = ctx.createGain();
+
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(3200, t);
+    o.frequency.exponentialRampToValueAtTime(70, t + dur);
+    bp.type = 'bandpass';
+    bp.Q.value = 2.5;
+    bp.frequency.setValueAtTime(5000, t);
+    bp.frequency.exponentialRampToValueAtTime(300, t + dur);
+
+    g.gain.setValueAtTime(0.28 * v, t);
+    g.gain.setValueAtTime(0.28 * v, t + dur * 0.7);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+
+    lfo.frequency.setValueAtTime(38, t);
+    lfo.frequency.exponentialRampToValueAtTime(5, t + dur);
+    lfoGain.gain.value = 0.1 * v;
+    lfo.connect(lfoGain).connect(g.gain);
+
+    o.connect(bp).connect(g).connect(out);
+    wet(g, 0.1);
+    o.start(t);
+    lfo.start(t);
+    o.stop(t + dur + 0.02);
+    lfo.stop(t + dur + 0.02);
+
+    sweepNoise(t, out, { f0: 6000, f1: 200, dur, q: 1.2, vol: 0.22 * v });
+    tone(t + dur - 0.02, out, { type: 'sine', f0: 90, f1: 50, dur: 0.12, vol: 0.3 * v });
+  },
+
+  // Un aller-retour de scratch
+  scratchbaby(t, out, f, v = 1) {
+    scratchCut(t, out, { dur: 0.14, from: 0.7, to: 2.6, vol: 1.5 * v });
+    scratchCut(t + 0.15, out, { dur: 0.15, from: 2.3, to: 0.6, vol: 0.9 * v });
+  },
+
+  // Scratch haché : le fader coupe et relance le son quatre fois très vite
+  scratchtrans(t, out, f, v = 1) {
+    for (let k = 0; k < 4; k++) {
+      scratchCut(t + k * 0.085, out, { dur: 0.06, from: 1.1, to: 1.7, vol: 1.5 * v });
+    }
+  },
+
+  // « Hey ! » : un « h » soufflé, puis la voyelle qui passe de « é » à « i »
+  voxhey(t, out, f, v = 1) {
+    burst(t, out, { type: 'bandpass', freq: 1900, q: 1.5, dur: 0.07, vol: 0.25 * v });
+    vowel(t + 0.03, out, {
+      f0: 250,
+      f1: 205,
+      formants: [[560, 330, 8, 1], [1850, 2300, 10, 0.8], [2600, 2800, 10, 0.4]],
+      dur: 0.34,
+      vol: 2.2 * v,
+      attack: 0.02,
+      breath: 0.12,
+      send: 0.14
+    });
+  },
+
+  // « Ooh » tenu par trois voix légèrement décalées, avec vibrato
+  voxooh(t, out, f, v = 1) {
+    [-7, 0, 7].forEach((cents, k) => {
+      vowel(t, out, {
+        f0: 220 * Math.pow(2, cents / 1200),
+        formants: [[310, 310, 8, 1], [870, 870, 10, 0.7], [2240, 2240, 10, 0.3]],
+        dur: 0.95,
+        vol: 1.3 * v,
+        attack: 0.15,
+        vibrato: [5.3, 4 + k],
+        breath: 0.05,
+        send: 0.25
+      });
+    });
+  },
+
+  // Foule : un grondement, beaucoup d'applaudissements au hasard et quelques « wouh »
+  crowd(t, out, f, v = 1) {
+    [[420, 0.5, 0.22], [1100, 0.6, 0.18]].forEach(([freq, q, vol]) => {
+      const s = ctx.createBufferSource();
       const bp = ctx.createBiquadFilter();
       const g = ctx.createGain();
-      o.type = 'sawtooth';
-      o.frequency.setValueAtTime(220, t);
-      o.frequency.exponentialRampToValueAtTime(900, t + 0.09);
-      o.frequency.exponentialRampToValueAtTime(250, t + 0.2);
+
+      s.buffer = noiseBuf;
+      s.loop = true;
       bp.type = 'bandpass';
-      bp.frequency.value = 1400;
-      bp.Q.value = 3;
-      g.gain.setValueAtTime(0.5 * v, t);
-      g.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
-      o.connect(bp).connect(g).connect(out);
-      o.start(t);
-      o.stop(t + 0.24);
-      burst(t, out, { type: 'bandpass', freq: 3000, dur: 0.05, vol: 0.15 * v });
-    },
-
-    // Scratch haché : le son est coupé et relancé quatre fois très vite
-    scratchtrans(t, out, f, v = 1) {
-      const bp = ctx.createBiquadFilter();
-      bp.type = 'bandpass';
-      bp.frequency.value = 1500;
-      bp.Q.value = 2;
-      bp.connect(out);
-
-      for (let k = 0; k < 4; k++) {
-        tone(t + k * 0.07, bp, { type: 'sawtooth', f0: 300, f1: 700, dur: 0.055, vol: 0.5 * v });
-      }
-    },
-
-    // « Hey ! » : une voix qui passe du « é » au « a »
-    voxhey(t, out, f, v = 1) {
-      burst(t, out, { type: 'highpass', freq: 3000, dur: 0.04, vol: 0.2 * v });
-      vowel(t, out, {
-        f0: 210,
-        f1: 170,
-        formants: [[450, 650, 6], [2000, 1300, 8]],
-        dur: 0.3,
-        vol: 1.2 * v,
-        attack: 0.03
-      });
-    },
-
-    // « Ooh » tenu, avec un léger vibrato
-    voxooh(t, out, f, v = 1) {
-      vowel(t, out, {
-        f0: 196,
-        formants: [[300, 300, 6], [800, 800, 8]],
-        dur: 0.8,
-        vol: 1.1 * v,
-        attack: 0.12,
-        vibrato: [5.5, 4]
-      });
-    },
-
-    // Acclamations de la foule : deux couches de bruit qui gonflent puis retombent
-    crowd(t, out, f, v = 1) {
-      [[1500, 0.7, 0.35], [3200, 1, 0.2]].forEach(([freq, q, vol]) => {
-        const s = ctx.createBufferSource();
-        const bp = ctx.createBiquadFilter();
-        const g = ctx.createGain();
-        s.buffer = noiseBuf;
-        s.loop = true;
-        bp.type = 'bandpass';
-        bp.frequency.value = freq;
-        bp.Q.value = q;
-        g.gain.setValueAtTime(0.001, t);
-        g.gain.linearRampToValueAtTime(vol * v, t + 0.3);
-        g.gain.exponentialRampToValueAtTime(0.001, t + 1.5);
-        s.connect(bp).connect(g).connect(out);
-        s.start(t);
-        s.stop(t + 1.6);
-      });
-    },
-
-    // Sifflet de DJ
-    whistle(t, out, f, v = 1) {
-      const o = ctx.createOscillator();
-      const g = ctx.createGain();
-      o.type = 'sine';
-      o.frequency.setValueAtTime(2400, t);
-      o.frequency.linearRampToValueAtTime(3100, t + 0.15);
+      bp.frequency.value = freq;
+      bp.Q.value = q;
       g.gain.setValueAtTime(0.001, t);
-      g.gain.linearRampToValueAtTime(0.22 * v, t + 0.02);
-      g.gain.setValueAtTime(0.22 * v, t + 0.3);
-      g.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
-      addVibrato(o, t, 0.45, 12, 50);
+      g.gain.linearRampToValueAtTime(vol * v, t + 0.35);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 1.7);
+      s.connect(bp).connect(g).connect(out);
+      wet(g, 0.2);
+      s.start(t);
+      s.stop(t + 1.75);
+    });
+
+    for (let k = 0; k < 55; k++) {
+      const at = Math.random() * 1.5;
+      const swell = Math.sin(Math.PI * Math.min(1, at / 1.5));
+
+      burst(t + at, out, {
+        type: 'bandpass',
+        freq: 900 + Math.random() * 3200,
+        q: 0.9,
+        dur: 0.012 + Math.random() * 0.02,
+        vol: (0.08 + Math.random() * 0.12) * v * (0.3 + swell)
+      });
+    }
+
+    [0.25, 0.6, 0.95].forEach((at, k) => {
+      vowel(t + at, out, {
+        f0: 330 + k * 60,
+        f1: 420 + k * 70,
+        formants: [[500, 700, 6, 1], [1100, 1400, 8, 0.7]],
+        dur: 0.35,
+        vol: 1.2 * v,
+        attack: 0.05,
+        breath: 0.15,
+        send: 0.2
+      });
+    });
+  },
+
+  // Sifflet à bille : deux coups avec le trille caractéristique
+  whistle(t, out, f, v = 1) {
+    [[0, 0.2], [0.26, 0.2]].forEach(([at, dur]) => {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+
+      o.type = 'sine';
+      o.frequency.setValueAtTime(2650 * 0.96, t + at);
+      o.frequency.linearRampToValueAtTime(2650 * 1.04, t + at + 0.05);
+      addVibrato(o, t + at, dur, 24, 90);
+
+      g.gain.setValueAtTime(0.001, t + at);
+      g.gain.linearRampToValueAtTime(0.2 * v, t + at + 0.015);
+      g.gain.setValueAtTime(0.2 * v, t + at + dur - 0.04);
+      g.gain.exponentialRampToValueAtTime(0.001, t + at + dur);
+
       o.connect(g).connect(out);
-      o.start(t);
-      o.stop(t + 0.47);
-    },
+      wet(g, 0.15);
+      o.start(t + at);
+      o.stop(t + at + dur + 0.02);
 
-    // Roulement de caisse claire qui accélère et monte en puissance
-    build(t, out, f, v = 1) {
-      let at = 0;
-      let gap = 0.22;
-      let vol = 0.2;
+      burst(t + at, out, { type: 'bandpass', freq: 3200, q: 2, dur, vol: 0.06 * v });
+    });
+  },
 
-      while (at < 1.5) {
-        burst(t + at, out, { type: 'highpass', freq: 2000, dur: 0.07, vol: v * vol });
-        tone(t + at, out, { type: 'triangle', f0: 220, f1: 150, dur: 0.08, vol: 0.25 * vol * v });
-        at += gap;
-        gap = Math.max(0.035, gap * 0.82);
-        vol = Math.min(1, vol + 0.07);
-      }
-    },
+  // Roulement de caisse claire qui accélère, sur un souffle qui monte
+  build(t, out, f, v = 1) {
+    let at = 0;
+    let gap = 0.22;
+    let vol = 0.2;
+    let pitch = 1;
 
-    // Grosse basse qui s'écroule
-    bassdrop(t, out, f, v = 1) {
+    while (at < 1.5) {
+      snareHit(t + at, out, v * vol, { pitch, send: 0.1 });
+      at += gap;
+      gap = Math.max(0.035, gap * 0.82);
+      vol = Math.min(1, vol + 0.07);
+      pitch += 0.02;
+    }
+
+    sweepNoise(t, out, { f0: 400, f1: 9000, dur: 1.5, q: 1.5, vol: 0.3 * v, up: true });
+  },
+
+  // Grosse basse qui s'écroule : grondement saturé, sous-grave et choc
+  bassdrop(t, out, f, v = 1) {
+    const lp = ctx.createBiquadFilter();
+    const g = ctx.createGain();
+
+    lp.type = 'lowpass';
+    lp.Q.value = 6;
+    lp.frequency.setValueAtTime(1800, t);
+    lp.frequency.exponentialRampToValueAtTime(90, t + 1.1);
+    g.gain.setValueAtTime(0.4 * v, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 1.4);
+    lp.connect(saturator(3)).connect(g).connect(out);
+
+    [0, 12].forEach((cents) => {
       const o = ctx.createOscillator();
-      const lp = ctx.createBiquadFilter();
-      const g = ctx.createGain();
       o.type = 'sawtooth';
-      o.frequency.setValueAtTime(110, t);
-      o.frequency.exponentialRampToValueAtTime(35, t + 1.0);
-      lp.type = 'lowpass';
-      lp.frequency.setValueAtTime(1200, t);
-      lp.frequency.exponentialRampToValueAtTime(120, t + 1.0);
-      g.gain.setValueAtTime(0.5 * v, t);
-      g.gain.exponentialRampToValueAtTime(0.001, t + 1.3);
-      o.connect(lp).connect(g).connect(out);
+      o.detune.value = cents;
+      o.frequency.setValueAtTime(96, t);
+      o.frequency.exponentialRampToValueAtTime(34, t + 1.1);
+      o.connect(lp);
       o.start(t);
-      o.stop(t + 1.35);
-      tone(t, out, { type: 'sine', f0: 60, f1: 28, dur: 1.3, vol: 0.8 * v });
-    },
+      o.stop(t + 1.45);
+    });
 
-    // Petites notes répétées de plus en plus aiguës
-    stutter(t, out, f, v = 1) {
-      for (let k = 0; k < 6; k++) {
-        tone(t + k * 0.055, out, { type: 'square', f0: 330 + k * 40, dur: 0.04, vol: 0.12 * v });
-      }
-    },
+    tone(t, out, { type: 'sine', f0: 62, f1: 30, dur: 1.4, vol: 0.9 * v });
+    burst(t, out, { type: 'lowpass', freq: 500, dur: 0.35, vol: 0.5 * v, send: 0.3 });
+  },
 
-    // Sirène « woop woop » : trois montées rapides
-    woop(t, out, f, v = 1) {
+  // Effet « stutter » : la même petite note répétée de plus en plus vite
+  stutter(t, out, f, v = 1) {
+    let at = 0;
+    let gap = 0.07;
+
+    for (let k = 0; k < 8; k++) {
+      const up = 1 + k * 0.06;
+      chord(t + at, out, [330 * up, 415 * up], { cutoff: 3500, cutoffEnd: 900, dur: gap * 0.9, vol: 0.5 * v, spread: 8 });
+      at += gap;
+      gap = Math.max(0.03, gap * 0.9);
+    }
+  },
+
+  // Sirène « woop woop » : trois montées rapides
+  woop(t, out, f, v = 1) {
+    const lp = ctx.createBiquadFilter();
+    const g = ctx.createGain();
+
+    lp.type = 'lowpass';
+    lp.frequency.value = 2800;
+    g.gain.setValueAtTime(0.16 * v, t);
+    g.gain.setValueAtTime(0.16 * v, t + 0.55);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.7);
+    lp.connect(saturator(2)).connect(g).connect(out);
+    wet(g, 0.15);
+
+    [0, 14].forEach((cents) => {
       const o = ctx.createOscillator();
-      const lp = ctx.createBiquadFilter();
-      const g = ctx.createGain();
-      o.type = 'square';
+      o.type = 'sawtooth';
+      o.detune.value = cents;
 
       for (let k = 0; k < 3; k++) {
-        o.frequency.setValueAtTime(500, t + k * 0.22);
-        o.frequency.exponentialRampToValueAtTime(1400, t + k * 0.22 + 0.2);
+        o.frequency.setValueAtTime(480, t + k * 0.22);
+        o.frequency.exponentialRampToValueAtTime(1350, t + k * 0.22 + 0.2);
       }
 
-      lp.type = 'lowpass';
-      lp.frequency.value = 3000;
-      g.gain.setValueAtTime(0.14 * v, t);
-      g.gain.setValueAtTime(0.14 * v, t + 0.55);
-      g.gain.exponentialRampToValueAtTime(0.001, t + 0.7);
-      o.connect(lp).connect(g).connect(out);
+      o.connect(lp);
       o.start(t);
       o.stop(t + 0.72);
-    }
-  };
-
-  // Joue le son d'un pad : le son personnel s'il y en a un, sinon le son d'origine
-  function playPad(i, t, v = 1, f = undefined) {
-    const sample = samples[i];
-
-    if (sample) {
-      const src = ctx.createBufferSource();
-      src.buffer = sample.buffer;
-
-      if (v !== 1) {
-        const g = ctx.createGain();
-        g.gain.value = v;
-        src.connect(g).connect(filter);
-      } else {
-        src.connect(filter);
-      }
-
-      src.start(t, 0, Math.min(sample.buffer.duration, MAX_SAMPLE_SECONDS));
-    } else {
-      SOUNDS[PADS[i].sound](t, filter, f, v);
-    }
+    });
   }
+};
 
+// Joue le son d'un pad : le son personnel s'il y en a un, sinon le son d'origine
+function playPad(i, t, v = 1, f = undefined) {
+  const sample = samples[i];
+
+  if (sample) {
+    const src = ctx.createBufferSource();
+    src.buffer = sample.buffer;
+
+    if (v !== 1) {
+      const g = ctx.createGain();
+      g.gain.value = v;
+      src.connect(g).connect(filter);
+    } else {
+      src.connect(filter);
+    }
+
+    src.start(t, 0, Math.min(sample.buffer.duration, MAX_SAMPLE_SECONDS));
+  } else {
+    SOUNDS[PADS[i].sound](t, filter, f, v);
+  }
+}
+  
   /* ---------- Boucles (16 pas) ---------- */
 
   // Construit le rythme d'un son : chaque élément est un numéro de pas,
